@@ -62,9 +62,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const leadActionTypes = [
-      'lead', 'contact', 'submit_form', 'complete_registration', 'onsite_conversion.post_save',
-      'onsite_conversion.messaging_welcome_message_view', 'offsite_conversion.fb_pixel_lead',
-      'offsite_conversion.fb_pixel_complete_registration', 'onsite_conversion.messaging_first_reply',
+      'lead', 
+      'contact', 
+      'submit_form', 
+      'complete_registration', 
+      'offsite_conversion.fb_pixel_lead',
+      'offsite_conversion.fb_pixel_complete_registration', 
       'app_custom_event.fb_mobile_complete_registration'
     ];
 
@@ -115,6 +118,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const totalSpend = parseFloat(summaryData.spend || 0);
     const safeTotalSpend = isNaN(totalSpend) ? 0 : totalSpend;
 
+    // Agregação para Rankings (Campanhas e Anúncios) - Necessário para o Dashboard
+    const campaignMap = new Map();
+    const adMap = new Map();
+
+    formattedData.forEach(item => {
+      if (!campaignMap.has(item.campaign_id)) {
+        campaignMap.set(item.campaign_id, {
+          campanha_id_externo: item.campaign_id, campanha_nome: item.campaign_name,
+          investimento: 0, cliques: 0, conversoes: 0, impressoes: 0, wa_conversations: 0, plataforma: 'meta'
+        });
+      }
+      const c = campaignMap.get(item.campaign_id);
+      c.investimento += parseFloat(item.spend);
+      c.cliques += item.clicks;
+      c.conversoes += item.leads;
+      c.impressoes += item.impressions;
+      c.wa_conversations += item.wa_conversations;
+
+      if (!adMap.has(item.ad_id)) {
+        adMap.set(item.ad_id, {
+          ad_id: item.ad_id, ad_name: item.ad_name, campaign_name: item.campaign_name,
+          investimento: 0, cliques: 0, conversoes: 0, impressoes: 0, wa_conversations: 0, reach: 0
+        });
+      }
+      const a = adMap.get(item.ad_id);
+      a.investimento += parseFloat(item.spend);
+      a.cliques += item.clicks;
+      a.conversoes += item.leads;
+      a.impressoes += item.impressions;
+      a.wa_conversations += item.wa_conversations;
+      a.reach += item.reach;
+    });
+
     res.status(200).json({
       summary: {
         period: datePreset || `${since} to ${until}`, reach: parseInt(summaryData.reach || 0),
@@ -122,7 +158,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         clicks: parseInt(summaryData.clicks || 0), spend: safeTotalSpend.toFixed(2),
         leads: totalLeads, wa_conversations: totalWaConversations, count: formattedData.length
       },
-      data: formattedData
+      data: formattedData,
+      campaigns: Array.from(campaignMap.values()),
+      ad_totals: Array.from(adMap.values())
     });
   } catch (error: any) {
     console.error("Erro no endpoint de insights:", error?.response?.data || error.message);
