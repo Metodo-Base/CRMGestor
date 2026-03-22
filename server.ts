@@ -89,7 +89,7 @@ class MetaAdsService {
   }
 
   static generateCacheKey(adAccountId: string, level: string, since: string, until: string, params: any): string {
-    const CACHE_VERSION = "v5_fix_deduplicate_merge_actions";
+    const CACHE_VERSION = "v6_aggressive_messaging_match";
     const cleanParams = { ...params };
     delete cleanParams.access_token;
     delete cleanParams.time_range;
@@ -599,8 +599,8 @@ async function startServer() {
           if (!a || typeof a !== 'object') continue;
           const actionType = String(a.action_type || '').toLowerCase();
           
-          if (actionType.startsWith("onsite_conversion.messaging_conversation_started") || 
-              actionType.startsWith("messaging_conversation_started")) {
+          // Be very aggressive: match anything containing "messaging_conversation_started"
+          if (actionType.includes("messaging_conversation_started")) {
             
             let val = 0;
             if (typeof a.value === 'number') {
@@ -621,17 +621,16 @@ async function startServer() {
           }
         }
 
-        // 2. Second pass: If no primary found, look for "total_messaging_connection" or "first_reply"
+        // 2. Second pass: If no primary found, look for "total_messaging_connection" or "first_reply" or "messaging_welcome_message_view"
         // These are often used as proxies or fallbacks in some Meta API versions/account types
         if (!foundPrimary || total === 0) {
           for (const a of actions) {
             if (!a || typeof a !== 'object') continue;
             const actionType = String(a.action_type || '').toLowerCase();
             
-            if (actionType === "onsite_conversion.total_messaging_connection" || 
-                actionType === "messaging_first_reply" ||
-                actionType === "onsite_conversion.messaging_first_reply" ||
-                actionType === "total_messaging_connection") {
+            if (actionType.includes("total_messaging_connection") || 
+                actionType.includes("messaging_first_reply") ||
+                actionType.includes("messaging_welcome_message_view")) {
               
               let val = 0;
               if (typeof a.value === 'number') {
