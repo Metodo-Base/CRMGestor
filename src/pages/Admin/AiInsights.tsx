@@ -327,11 +327,30 @@ Estruture sua resposta obrigatoriamente nos seguintes tópicos:
         frequency: totalImpressions / totalReach || 1,
         ctr: (totalClicks / totalImpressions) * 100 || 0,
         cpm: (totalSpend / totalImpressions) * 1000 || 0,
-        results: totalResults,
+        results: totalConversions,
         costPerResult: totalSpend / totalConversions || 0
       });
 
-      const dataString = JSON.stringify(mappedInsights, null, 2);
+      const dataString = JSON.stringify({
+        periodo: {
+          inicio: startDate,
+          fim: endDate
+        },
+        kpis_gerais: {
+          investimento_total: totalSpend,
+          impressoes_totais: totalImpressions,
+          cliques_totais: totalClicks,
+          alcance_total: totalReach,
+          frequencia_media: totalImpressions / totalReach || 1,
+          ctr_medio: (totalClicks / totalImpressions) * 100 || 0,
+          cpm_medio: (totalSpend / totalImpressions) * 1000 || 0,
+          conversoes_totais: totalConversions,
+          leads_cadastros: totalResults,
+          conversas_whatsapp: totalWaConversations,
+          custo_por_conversao_medio: totalSpend / totalConversions || 0
+        },
+        detalhamento_campanhas: mappedInsights
+      }, null, 2);
 
       // 5. Call OpenAI API
       const openai = new OpenAI({
@@ -346,10 +365,12 @@ Estruture sua resposta obrigatoriamente nos seguintes tópicos:
 
       const userPrompt = `${prompt}
       
-      Dados das campanhas do cliente ${clientData.nome_cliente}:
+      DADOS DE PERFORMANCE (Período: ${startDate} até ${endDate}):
       ${dataString}
       
-      Observação: 'results' refere-se a Cadastros/Leads e 'wa_conversations' refere-se a Conversas no WhatsApp.
+      IMPORTANTE: Utilize EXATAMENTE os números acima (KPIs Gerais e Detalhamento) para sua análise. 
+      O campo 'conversoes_totais' é a soma de 'leads_cadastros' e 'conversas_whatsapp'.
+      O 'custo_por_conversao_medio' é o Investimento Total dividido pelas Conversões Totais.
       
       Retorne o resultado EXATAMENTE no seguinte formato JSON:
       {
