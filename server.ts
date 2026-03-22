@@ -146,21 +146,25 @@ class MetaAdsService {
 
     console.log(`[MetaAdsService] Processando ${chunks.length} janelas para ${adAccountId} (${level})`);
 
+    const debugChunks: any[] = [];
     for (const chunk of chunks) {
       const cacheKey = this.generateCacheKey(adAccountId, level, chunk.since, chunk.until, baseParams);
+      let chunkData: any[] | null = null;
+      let source = 'live';
       
       if (useCache && adminDb) {
         try {
           const cacheDoc = await adminDb.collection("meta_cache").doc(cacheKey).get();
           if (cacheDoc.exists) {
             const cacheData = cacheDoc.data();
-            // Only use cache if it's not for today or yesterday (to allow data to settle)
             const today = format(new Date(), 'yyyy-MM-dd');
             const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd');
             
-            if (chunk.until !== today && chunk.until !== yesterday && cacheData.status === 'success') {
+            // Normal cache hit (not for today/yesterday)
+            if (chunk.until !== today && chunk.until !== yesterday && cacheData?.status === 'success') {
               console.log(`[MetaAdsService] Cache hit para ${chunk.since} - ${chunk.until}`);
               allResults = [...allResults, ...cacheData.data];
+              debugChunks.push({ ...chunk, status: 'cache_hit', source: 'cache' });
               continue;
             }
           }
@@ -176,13 +180,14 @@ class MetaAdsService {
         };
         
         const url = `https://graph.facebook.com/v19.0/${adAccountId}/insights`;
-        const chunkData = await this.fetchAllPages(url, { 
+        chunkData = await this.fetchAllPages(url, { 
           params, 
           headers: { Authorization: `Bearer ${accessToken}` },
           timeout: 60000 
         });
         
         allResults = [...allResults, ...chunkData];
+        debugChunks.push({ ...chunk, status: 'success', source: 'live', count: chunkData.length });
 
         if (useCache && adminDb) {
           await adminDb.collection("meta_cache").doc(cacheKey).set({
@@ -198,12 +203,34 @@ class MetaAdsService {
           });
         }
       } catch (error: any) {
-        console.error(`[MetaAdsService] Erro na janela ${chunk.since} - ${chunk.until}:`, error?.response?.data || error.message);
-        // Partial fail: we continue with other chunks
+        const errorMsg = error?.response?.data || error.message;
+        console.error(`[MetaAdsService] Erro na janela ${chunk.since} - ${chunk.until}:`, errorMsg);
+        
+        // --- CACHE FALLBACK ON FAILURE ---
+        if (useCache && adminDb) {
+          try {
+            console.log(`[MetaAdsService] Tentando fallback para cache na janela ${chunk.since} - ${chunk.until}`);
+            const cacheDoc = await adminDb.collection("meta_cache").doc(cacheKey).get();
+            if (cacheDoc.exists) {
+              const cacheData = cacheDoc.data();
+              if (cacheData?.status === 'success' && Array.isArray(cacheData.data)) {
+                console.log(`[MetaAdsService] Fallback de cache SUCESSO para ${chunk.since} - ${chunk.until}`);
+                allResults = [...allResults, ...cacheData.data];
+                debugChunks.push({ ...chunk, status: 'fallback_cache', source: 'cache', error: error.message });
+                continue;
+              }
+            }
+          } catch (fallbackError) {
+            console.error(`[MetaAdsService] Falha no fallback de cache:`, fallbackError);
+          }
+        }
+        
+        debugChunks.push({ ...chunk, status: 'failed', error: error.message });
       }
     }
 
-    return this.deduplicate(allResults, level);
+    const finalResults = this.deduplicate(allResults, level);
+    return { data: finalResults, debug: debugChunks };
   }
 }
 
@@ -344,9 +371,10 @@ async function startServer() {
 
   // Meta Ads Insights
   app.get("/api/meta/insights", async (req, res) => {
-    const { access_token, ad_account_id, date_preset, since, until, debug, backfill } = req.query;
+    const { access_token, ad_account_id, date_preset, since, until, debug, backfill, nocache } = req.query;
     const isDebug = debug === '1' || debug === 'true';
     const isBackfill = backfill === '1' || backfill === 'true';
+    const useCache = !(nocache === '1' || nocache === 'true');
 
     if (!access_token || !ad_account_id) {
       return res.status(400).json({ 
@@ -412,11 +440,15 @@ async function startServer() {
       };
 
       // 3. Executar Coleta em Chunks (Dados Diários para Gráficos)
-      const [rawDetailedData, rawCampaignData, rawPlatformData] = await Promise.all([
-        MetaAdsService.getInsightsInChunks(access_token as string, accountId as string, 'ad', finalSince, finalUntil, baseDetailedParams),
-        MetaAdsService.getInsightsInChunks(access_token as string, accountId as string, 'campaign', finalSince, finalUntil, baseCampaignParams),
-        MetaAdsService.getInsightsInChunks(access_token as string, accountId as string, 'campaign', finalSince, finalUntil, basePlatformParams)
+      const [detailedRes, campaignRes, platformRes] = await Promise.all([
+        MetaAdsService.getInsightsInChunks(access_token as string, accountId as string, 'ad', finalSince, finalUntil, baseDetailedParams, useCache),
+        MetaAdsService.getInsightsInChunks(access_token as string, accountId as string, 'campaign', finalSince, finalUntil, baseCampaignParams, useCache),
+        MetaAdsService.getInsightsInChunks(access_token as string, accountId as string, 'campaign', finalSince, finalUntil, basePlatformParams, useCache)
       ]);
+
+      const rawDetailedData = detailedRes.data;
+      const rawCampaignData = campaignRes.data;
+      const rawPlatformData = platformRes.data;
 
       // 4. Buscar Totais do Período (sem time_increment) para Rankings Precisos (Frequência/Alcance)
       const campaignTotalsParams = { ...baseCampaignParams };
@@ -487,12 +519,35 @@ async function startServer() {
       const debugInfo: any = isDebug ? {
         audit_logs: [
           { event: 'collection_start', since: finalSince, until: finalUntil, accountId },
-          { event: 'chunks_processed', detailed_count: rawDetailedData.length, campaign_count: rawCampaignData.length }
+          { 
+            event: 'chunks_processed', 
+            detailed_chunks: detailedRes.debug,
+            campaign_chunks: campaignRes.debug,
+            platform_chunks: platformRes.debug
+          },
+          { 
+            event: 'record_counts', 
+            rawDetailedData: rawDetailedData.length, 
+            rawCampaignData: rawCampaignData.length,
+            rawPlatformData: rawPlatformData.length,
+            campaignTotals: campaignTotals.length,
+            adTotals: adTotals.length
+          }
         ],
         destination_inference: {},
         campaign_results_preview: [],
-        request_params_used: { baseDetailedParams, baseCampaignParams, basePlatformParams }
+        request_params_used: { baseDetailedParams, baseCampaignParams, basePlatformParams, useCache }
       } : null;
+
+      // Sample action types for debugging (safe)
+      if (isDebug && rawCampaignData.length > 0) {
+        const sampleActions = new Set<string>();
+        rawCampaignData.slice(0, 10).forEach(item => {
+          const actions = Array.isArray(item.actions) ? item.actions : [];
+          actions.forEach((a: any) => sampleActions.add(a.action_type));
+        });
+        debugInfo.sample_action_types = Array.from(sampleActions);
+      }
 
       // --- PROCESSAMENTO DE DADOS ---
       const waUrlMatches = (process.env.META_WHATSAPP_URL_MATCH || 'wa.me,api.whatsapp.com,whatsapp').split(',').map(s => s.trim().toLowerCase());
@@ -523,14 +578,31 @@ async function startServer() {
         'offsite_conversion.fb_pixel_complete_registration'
       ];
 
-      const extractActions = (actions: any[], types: string[]) => {
-        if (!actions || !Array.isArray(actions)) return 0;
+      const extractActions = (actionsInput: any, types: string[]) => {
+        let actions: any[] = [];
+        
+        // Robust normalization of actions
+        if (typeof actionsInput === 'string') {
+          try {
+            actions = JSON.parse(actionsInput);
+          } catch (e) {
+            actions = [];
+          }
+        } else if (Array.isArray(actionsInput)) {
+          actions = actionsInput;
+        } else if (actionsInput && typeof actionsInput === 'object') {
+          // If it's a map/object with numeric keys or data property
+          actions = actionsInput.data || Object.values(actionsInput);
+        }
+
+        if (!Array.isArray(actions)) return 0;
+
         return actions.reduce((acc: number, a: any) => {
-          const actionType = String(a.action_type).toLowerCase();
-          // Use exact match to avoid double counting overlapping types (like started vs started_7d)
+          if (!a || typeof a !== 'object') return acc;
+          const actionType = String(a.action_type || '').toLowerCase();
           const isMatch = types.some(type => actionType === type.toLowerCase());
           if (isMatch) {
-            const val = parseFloat(String(a.value).replace(',', '.') || '0');
+            const val = parseFloat(String(a.value || '0').replace(',', '.'));
             return acc + (isNaN(val) ? 0 : val);
           }
           return acc;
