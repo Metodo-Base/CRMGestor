@@ -128,7 +128,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
                     currentUntil = format(new Date(), 'yyyy-MM-dd');
                   }
 
-                  const debugParam = debugMode ? "&debug=1" : "";
+                  const debugParam = debugMode ? "&debug=1&nocache=1" : "";
                   
                   // Fetch Current Period
                   const currentApiUrl = `/api/meta/insights?access_token=${encodeURIComponent(accessToken)}&ad_account_id=${encodeURIComponent(clientData.meta_ads_account_id)}&since=${encodeURIComponent(currentSince)}&until=${encodeURIComponent(currentUntil)}${debugParam}`;
@@ -716,11 +716,17 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
           </div>
           <div className="space-y-1">
             <h3 className="text-lg font-bold text-slate-900 dark:text-white">Nenhum dado encontrado para este período</h3>
-            <p className="text-slate-500 dark:text-slate-400">
+            <p className="text-slate-500 dark:text-slate-400 max-w-md mx-auto">
               {cliente.meta_ads_conectado 
-                ? "A conta conectada não possui campanhas ativas ou dados registrados no período selecionado."
+                ? "A conta conectada não possui campanhas ativas ou dados registrados no período selecionado. Tente mudar o período ou ativar o modo Debug para auditar a conexão."
                 : "Conecte uma conta de anúncios da Meta para visualizar métricas reais."}
             </p>
+            <button 
+              onClick={() => handleApplyFilters()}
+              className="mt-4 px-6 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-all"
+            >
+              Recarregar Dados
+            </button>
           </div>
         </div>
       </div>
