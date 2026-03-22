@@ -29,6 +29,30 @@ const __dirname = path.dirname(__filename);
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
+// --- HELPERS PARA CÁLCULO DE WHATSAPP (CORREÇÃO DO _7d) ---
+const getWaConversations = (actionsRaw: any): number => {
+  if (!actionsRaw) return 0;
+
+  let actions: any[] = [];
+  if (Array.isArray(actionsRaw)) {
+    actions = actionsRaw;
+  } else if (typeof actionsRaw === 'string') {
+    try { actions = JSON.parse(actionsRaw); } catch { return 0; }
+  } else if (actionsRaw.data && Array.isArray(actionsRaw.data)) {
+    actions = actionsRaw.data;
+  }
+
+  let total = 0;
+  for (const a of actions) {
+    const type = String(a.action_type || "");
+    // O startsWith garante que vai pegar "onsite_conversion.messaging_conversation_started_7d"
+    if (type.startsWith("onsite_conversion.messaging_conversation_started")) {
+      total += parseFloat(String(a.value || "0").replace(',', '.'));
+    }
+  }
+  return total;
+};
+
 // --- META ADS ROBUST SERVICE ---
 class MetaAdsService {
   private static MAX_RETRIES = 3;
@@ -43,7 +67,7 @@ class MetaAdsService {
       const status = error?.response?.status;
       const errorData = error?.response?.data;
       const isRetryable = status === 429 || (status >= 500 && status <= 599) || error.code === 'ECONNABORTED';
-      
+
       // Handle Meta specific rate limiting
       if (errorData?.error?.code === 17 || errorData?.error?.code === 80004) {
         const backoff = 10000; // 10s for rate limit
@@ -72,7 +96,7 @@ class MetaAdsService {
       const response = await this.fetchWithRetry(nextUrl, currentConfig);
       const data = response.data.data || [];
       allData = [...allData, ...data];
-      
+
       if (response.data.paging?.next && data.length > 0) {
         nextUrl = response.data.paging.next;
         // After the first page, the nextUrl already contains the params
@@ -89,12 +113,13 @@ class MetaAdsService {
   }
 
   static generateCacheKey(adAccountId: string, level: string, since: string, until: string, params: any): string {
-    const CACHE_VERSION = "v6_aggressive_messaging_match";
+    // MUDANÇA AQUI: Versão v7 para forçar a limpeza do cache antigo com dados zerados
+    const CACHE_VERSION = "v7_clear_cache_final"; 
     const cleanParams = { ...params };
     delete cleanParams.access_token;
     delete cleanParams.time_range;
     delete cleanParams.date_preset;
-    
+
     const paramStr = JSON.stringify(cleanParams);
     const hash = crypto.createHash('md5').update(`${CACHE_VERSION}_${adAccountId}_${level}_${since}_${until}_${paramStr}`).digest('hex');
     return hash;
@@ -111,7 +136,7 @@ class MetaAdsService {
       } else {
         key = `${item.account_id || 'total'}_${item.date_start}`;
       }
-      
+
       // Include breakdowns in the key to avoid merging different platform/device data
       if (item.publisher_platform) key += `_${item.publisher_platform}`;
       if (item.platform_position) key += `_${item.platform_position}`;
@@ -122,12 +147,12 @@ class MetaAdsService {
         map.set(key, JSON.parse(JSON.stringify(item)));
       } else {
         const existing = map.get(key);
-        
+
         // Merge actions array
         if (item.actions) {
           const existingActions = Array.isArray(existing.actions) ? existing.actions : [];
           const newActions = Array.isArray(item.actions) ? item.actions : [item.actions];
-          
+
           // Deduplicate actions within the merged array by action_type
           const actionMap = new Map();
           [...existingActions, ...newActions].forEach(a => {
@@ -193,7 +218,7 @@ class MetaAdsService {
       const cacheKey = this.generateCacheKey(adAccountId, level, chunk.since, chunk.until, baseParams);
       let chunkData: any[] | null = null;
       let source = 'live';
-      
+
       if (useCache && adminDb) {
         try {
           const cacheDoc = await adminDb.collection("meta_cache").doc(cacheKey).get();
@@ -201,7 +226,7 @@ class MetaAdsService {
             const cacheData = cacheDoc.data();
             const today = format(new Date(), 'yyyy-MM-dd');
             const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd');
-            
+
             // Normal cache hit (not for today/yesterday)
             if (chunk.until !== today && chunk.until !== yesterday && cacheData?.status === 'success') {
               console.log(`[MetaAdsService] Cache hit para ${chunk.since} - ${chunk.until}`);
@@ -220,14 +245,14 @@ class MetaAdsService {
           ...baseParams,
           time_range: JSON.stringify(chunk)
         };
-        
+
         const url = `https://graph.facebook.com/v19.0/${adAccountId}/insights`;
         chunkData = await this.fetchAllPages(url, { 
           params, 
           headers: { Authorization: `Bearer ${accessToken}` },
           timeout: 60000 
         });
-        
+
         allResults = [...allResults, ...chunkData];
         debugChunks.push({ ...chunk, status: 'success', source: 'live', count: chunkData.length });
 
@@ -247,7 +272,7 @@ class MetaAdsService {
       } catch (error: any) {
         const errorMsg = error?.response?.data || error.message;
         console.error(`[MetaAdsService] Erro na janela ${chunk.since} - ${chunk.until}:`, errorMsg);
-        
+
         // --- CACHE FALLBACK ON FAILURE ---
         if (useCache && adminDb) {
           try {
@@ -266,7 +291,7 @@ class MetaAdsService {
             console.error(`[MetaAdsService] Falha no fallback de cache:`, fallbackError);
           }
         }
-        
+
         debugChunks.push({ ...chunk, status: 'failed', error: error.message });
       }
     }
@@ -288,7 +313,7 @@ async function startServer() {
       return res.status(401).json({ error: "Unauthorized: Missing API Key" });
     }
     const apiKey = authHeader.split(" ")[1];
-    
+
     try {
       const snap = await adminDb.collection("api_keys")
         .where("key_hash", "==", apiKey)
@@ -332,7 +357,7 @@ async function startServer() {
     const baseUrl = (origin as string) || process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
     const redirectUri = process.env.META_REDIRECT_URI || `${baseUrl}/api/auth/facebook/callback`;
     const scopes = ["ads_read", "business_management"].join(",");
-    
+
     const url = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes}&response_type=code&state=${cliente_id}`;
     res.json({ url });
   });
@@ -346,7 +371,7 @@ async function startServer() {
 
     try {
       const redirectUri = process.env.META_REDIRECT_URI || `${process.env.APP_URL}/api/auth/facebook/callback`;
-      
+
       // 1. Exchange code for short-lived access token
       const tokenResponse = await axios.get("https://graph.facebook.com/v19.0/oauth/access_token", {
         params: {
@@ -384,601 +409,53 @@ async function startServer() {
       // 5. Return success and close popup
       res.send(`
         <html>
-          <body>
-            <script>
+          <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f8fafc;">
+            <div style="text-align: center; padding: 2rem; background: white; border-radius: 1rem; shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+              <h2 style="color: #0f172a; margin-bottom: 0.5rem;">Conexão Bem-sucedida!</h2>
+              <p style="color: #64748b;">Aguarde, estamos finalizando a configuração...</p>
+              <script>
                 if (window.opener) {
                   window.opener.postMessage({ 
                     type: 'OAUTH_AUTH_SUCCESS', 
                     platform: 'meta',
-                    accessToken: '${accessToken}',
-                    adAccounts: ${JSON.stringify(adAccounts)},
-                    expiresIn: 5184000 // 60 days for long-lived token
+                    adAccounts: ${JSON.stringify(adAccounts)}
                   }, '*');
                   setTimeout(() => window.close(), 1000);
                 } else {
                   window.location.href = '/admin/dashboard';
                 }
               </script>
-              <p>Autenticação Meta Ads concluída. Redirecionando...</p>
             </div>
           </body>
         </html>
       `);
-
     } catch (error: any) {
-      console.error("Erro no callback Facebook:", error?.response?.data || error.message);
-      res.status(500).send("Erro na autenticação com Meta Ads");
+      console.error("[MetaAds] Erro no callback:", error.response?.data || error.message);
+      res.status(500).send(`
+        <html>
+          <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #fef2f2;">
+            <div style="text-align: center; padding: 2rem; background: white; border-radius: 1rem; border: 1px solid #fee2e2;">
+              <h2 style="color: #991b1b; margin-bottom: 0.5rem;">Erro na Autenticação</h2>
+              <p style="color: #b91c1c;">${error.message || "Ocorreu um erro ao processar a conexão com o Meta Ads."}</p>
+              <button onclick="window.close()" style="margin-top: 1rem; padding: 0.5rem 1rem; background: #ef4444; color: white; border: none; border-radius: 0.5rem; cursor: pointer;">Fechar Janela</button>
+            </div>
+          </body>
+        </html>
+      `);
     }
   });
-
-  // Meta Ads Insights
-  app.get("/api/meta/insights", async (req, res) => {
-    const { access_token, ad_account_id, date_preset, since, until, debug, backfill, nocache } = req.query;
-    const isDebug = debug === '1' || debug === 'true';
-    const isBackfill = backfill === '1' || backfill === 'true';
-    const useCache = !(nocache === '1' || nocache === 'true');
-
-    if (!access_token || !ad_account_id) {
-      return res.status(400).json({ 
-        error: "Parâmetros 'access_token' e 'ad_account_id' são obrigatórios." 
-      });
-    }
-
-    try {
-      const accountId = (ad_account_id as string).startsWith('act_') ? ad_account_id : `act_${ad_account_id}`;
-      
-      // 1. Determinar Período Final
-      let finalSince = since as string;
-      let finalUntil = until as string;
-      let usePreset = (date_preset as string) || 'last_30d';
-
-      if (!finalSince || !finalUntil) {
-        const today = new Date();
-        finalUntil = format(today, 'yyyy-MM-dd');
-        
-        if (usePreset === 'maximum') {
-          finalSince = process.env.META_BACKFILL_START_DATE || '2023-01-01';
-        } else if (usePreset === 'last_30d') {
-          finalSince = format(subDays(today, 30), 'yyyy-MM-dd');
-        } else if (usePreset === 'last_90d') {
-          finalSince = format(subDays(today, 90), 'yyyy-MM-dd');
-        } else if (usePreset === 'this_month') {
-          finalSince = format(startOfDay(new Date(today.getFullYear(), today.getMonth(), 1)), 'yyyy-MM-dd');
-        } else if (usePreset === 'last_month') {
-          const firstDayThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-          const lastDayLastMonth = subDays(firstDayThisMonth, 1);
-          finalSince = format(startOfDay(new Date(lastDayLastMonth.getFullYear(), lastDayLastMonth.getMonth(), 1)), 'yyyy-MM-dd');
-          finalUntil = format(lastDayLastMonth, 'yyyy-MM-dd');
-        } else {
-          finalSince = format(subDays(today, 30), 'yyyy-MM-dd');
-        }
-      }
-
-      console.log(`[MetaAds] Iniciando coleta robusta para ${accountId} de ${finalSince} até ${finalUntil} (Backfill: ${isBackfill})`);
-
-      // 2. Definir Parâmetros Base
-      const baseDetailedParams = {
-        fields: 'campaign_name,adset_name,ad_name,campaign_id,adset_id,ad_id,impressions,clicks,spend,reach,frequency,actions,cost_per_action_type,cpm,cpp,ctr,cpc,date_start,date_stop',
-        level: 'ad',
-        time_increment: 1,
-        action_breakdowns: 'action_type',
-        limit: 1000
-      };
-      const baseCampaignParams = {
-        fields: 'campaign_id,campaign_name,impressions,clicks,spend,reach,frequency,actions,objective,optimization_goal,date_start,date_stop',
-        level: 'campaign',
-        time_increment: 1,
-        action_breakdowns: 'action_type',
-        limit: 1000
-      };
-
-      const basePlatformParams = {
-        fields: 'campaign_id,actions,date_start',
-        level: 'campaign',
-        time_increment: 1,
-        breakdowns: 'publisher_platform',
-        action_breakdowns: 'action_type',
-        limit: 1000
-      };
-
-      // 3. Executar Coleta em Chunks (Dados Diários para Gráficos)
-      const [detailedRes, campaignRes, platformRes] = await Promise.all([
-        MetaAdsService.getInsightsInChunks(access_token as string, accountId as string, 'ad', finalSince, finalUntil, baseDetailedParams, useCache),
-        MetaAdsService.getInsightsInChunks(access_token as string, accountId as string, 'campaign', finalSince, finalUntil, baseCampaignParams, useCache),
-        MetaAdsService.getInsightsInChunks(access_token as string, accountId as string, 'campaign', finalSince, finalUntil, basePlatformParams, useCache)
-      ]);
-
-      const rawDetailedData = detailedRes.data;
-      const rawCampaignData = campaignRes.data;
-      const rawPlatformData = platformRes.data;
-
-      // 4. Buscar Totais do Período (sem time_increment) para Rankings Precisos (Frequência/Alcance)
-      const campaignTotalsParams = { ...baseCampaignParams };
-      delete (campaignTotalsParams as any).time_increment;
-      (campaignTotalsParams as any).time_range = JSON.stringify({ since: finalSince, until: finalUntil });
-
-      const adTotalsParams = { ...baseDetailedParams };
-      delete (adTotalsParams as any).time_increment;
-      (adTotalsParams as any).time_range = JSON.stringify({ since: finalSince, until: finalUntil });
-
-      const [campaignTotals, adTotals] = await Promise.all([
-        MetaAdsService.fetchAllPages(`https://graph.facebook.com/v19.0/${accountId}/insights`, {
-          headers: { Authorization: `Bearer ${access_token}` },
-          params: campaignTotalsParams,
-          timeout: 45000
-        }),
-        MetaAdsService.fetchAllPages(`https://graph.facebook.com/v19.0/${accountId}/insights`, {
-          headers: { Authorization: `Bearer ${access_token}` },
-          params: adTotalsParams,
-          timeout: 45000
-        })
-      ]).catch(err => {
-        console.warn(`[MetaAds] Erro ao buscar totais detalhados:`, err.message);
-        return [[], []];
-      });
-
-      // 5. Buscar Resumo da Conta
-      let summaryData: any = {};
-      try {
-        const summaryParams: any = {
-          fields: 'reach,frequency,impressions,clicks,spend,actions',
-          level: 'account',
-          action_breakdowns: 'action_type',
-          time_range: JSON.stringify({ since: finalSince, until: finalUntil })
-        };
-        const summaryRes = await MetaAdsService.fetchWithRetry(`https://graph.facebook.com/v19.0/${accountId}/insights`, {
-          headers: { Authorization: `Bearer ${access_token}` },
-          params: summaryParams,
-          timeout: 45000
-        });
-        summaryData = summaryRes.data.data?.[0] || {};
-      } catch (summaryError: any) {
-        console.warn(`[MetaAds] Falha ao buscar resumo da conta (usando agregação manual):`, summaryError.message);
-        summaryData = {
-          impressions: rawCampaignData.reduce((acc, curr) => acc + parseInt(curr.impressions || 0), 0),
-          clicks: rawCampaignData.reduce((acc, curr) => acc + parseInt(curr.clicks || 0), 0),
-          spend: rawCampaignData.reduce((acc, curr) => acc + parseFloat(curr.spend || 0), 0),
-          actions: []
-        };
-      }
-
-      // 5. Buscar Metadados das Campanhas
-      let campaignMetadata: any[] = [];
-      try {
-        const metaRes = await MetaAdsService.fetchWithRetry(`https://graph.facebook.com/v19.0/${accountId}/campaigns`, {
-          headers: { Authorization: `Bearer ${access_token}` },
-          params: {
-            fields: 'id,name,objective,optimization_goal,promoted_object,smart_promotion_type,adsets{id,name,promoted_object,ads{id,name,creative{id,name,object_story_spec{link_data{link,call_to_action{value{link}}}}}}}',
-            limit: 250
-          },
-          timeout: 45000
-        });
-        campaignMetadata = metaRes.data.data || [];
-      } catch (metaError: any) {
-        console.warn(`[MetaAds] Falha ao buscar metadados das campanhas:`, metaError.message);
-      }
-
-      const normalizeActions = (actionsInput: any): any[] => {
-        if (!actionsInput) return [];
-        
-        let actions: any[] = [];
-        if (typeof actionsInput === 'string') {
-          try {
-            actionsInput = JSON.parse(actionsInput);
-          } catch (e) {
-            // If it's not JSON, it might be a raw string value or something else
-            return [];
-          }
-        }
-
-        if (Array.isArray(actionsInput)) {
-          actions = actionsInput;
-        } else if (typeof actionsInput === 'object' && actionsInput !== null) {
-          if (actionsInput.data && Array.isArray(actionsInput.data)) {
-            actions = actionsInput.data;
-          } else if (actionsInput.action_type && (actionsInput.value !== undefined)) {
-            actions = [actionsInput];
-          } else {
-            // Handle as a map of { action_type: value }
-            actions = Object.entries(actionsInput).map(([key, val]) => ({
-              action_type: key,
-              value: val
-            }));
-          }
-        }
-        return Array.isArray(actions) ? actions : [];
-      };
-
-      const getMessagingConversationsStarted = (actionsInput: any): number => {
-        const actions = normalizeActions(actionsInput);
-        let total = 0;
-        let foundPrimary = false;
-
-        // 1. First pass: Look for standard "messaging_conversation_started" types
-        for (const a of actions) {
-          if (!a || typeof a !== 'object') continue;
-          const actionType = String(a.action_type || '').toLowerCase();
-          
-          // Be very aggressive: match anything containing "messaging_conversation_started"
-          if (actionType.includes("messaging_conversation_started")) {
-            
-            let val = 0;
-            if (typeof a.value === 'number') {
-              val = a.value;
-            } else if (Array.isArray(a.value)) {
-              val = a.value.reduce((sum: number, v: any) => {
-                const innerVal = parseFloat(String(v.value || v || '0').replace(',', '.'));
-                return sum + (isNaN(innerVal) ? 0 : innerVal);
-              }, 0);
-            } else {
-              val = parseFloat(String(a.value || '0').replace(',', '.'));
-            }
-            
-            if (!isNaN(val) && val > 0) {
-              total += val;
-              foundPrimary = true;
-            }
-          }
-        }
-
-        // 2. Second pass: If no primary found, look for "total_messaging_connection" or "first_reply" or "messaging_welcome_message_view"
-        // These are often used as proxies or fallbacks in some Meta API versions/account types
-        if (!foundPrimary || total === 0) {
-          for (const a of actions) {
-            if (!a || typeof a !== 'object') continue;
-            const actionType = String(a.action_type || '').toLowerCase();
-            
-            if (actionType.includes("total_messaging_connection") || 
-                actionType.includes("messaging_first_reply") ||
-                actionType.includes("messaging_welcome_message_view")) {
-              
-              let val = 0;
-              if (typeof a.value === 'number') {
-                val = a.value;
-              } else if (Array.isArray(a.value)) {
-                val = a.value.reduce((sum: number, v: any) => {
-                  const innerVal = parseFloat(String(v.value || v || '0').replace(',', '.'));
-                  return sum + (isNaN(innerVal) ? 0 : innerVal);
-                }, 0);
-              } else {
-                val = parseFloat(String(a.value || '0').replace(',', '.'));
-              }
-              
-              if (!isNaN(val) && val > 0) {
-                total += val;
-              }
-            }
-          }
-        }
-
-        return total;
-      };
-
-      const debugInfo: any = isDebug ? {
-        audit_logs: [
-          { event: 'collection_start', since: finalSince, until: finalUntil, accountId },
-          { 
-            event: 'chunks_processed', 
-            detailed_chunks: detailedRes.debug,
-            campaign_chunks: campaignRes.debug,
-            platform_chunks: platformRes.debug
-          },
-          { 
-            event: 'record_counts', 
-            rawDetailedData: rawDetailedData.length, 
-            rawCampaignData: rawCampaignData.length,
-            rawPlatformData: rawPlatformData.length,
-            campaignTotals: campaignTotals.length,
-            adTotals: adTotals.length
-          }
-        ],
-        destination_inference: {},
-        campaign_results_preview: [],
-        request_params_used: { baseDetailedParams, baseCampaignParams, basePlatformParams, useCache }
-      } : null;
-
-      // Sample action types for debugging (safe)
-      if (isDebug && rawCampaignData.length > 0) {
-        const sampleActions = new Set<string>();
-        rawCampaignData.slice(0, 30).forEach(item => {
-          const actions = normalizeActions(item.actions);
-          actions.forEach((a: any) => {
-            if (a.action_type) sampleActions.add(a.action_type);
-          });
-        });
-        debugInfo.sample_action_types = Array.from(sampleActions).slice(0, 30);
-      }
-
-      // --- PROCESSAMENTO DE DADOS ---
-      const waUrlMatches = (process.env.META_WHATSAPP_URL_MATCH || 'wa.me,api.whatsapp.com,whatsapp').split(',').map(s => s.trim().toLowerCase());
-      const waResultActionTypes = (process.env.META_RESULTS_WHATSAPP_ACTION_TYPE || 'onsite_conversion.messaging_conversation_started_7d')
-        .split(',')
-        .map(s => s.trim());
-
-      // Add common fallbacks if not already present to ensure robustness across different accounts/API versions
-      const waFallbacks = [
-        'onsite_conversion.messaging_conversation_started_7d',
-        'onsite_conversion.messaging_conversation_started',
-        'messaging_conversation_started_7d',
-        'messaging_conversation_started',
-        'onsite_conversion.messaging_conversation_started_28d',
-        'messaging_conversation_started_28d'
-      ];
-      waFallbacks.forEach(f => {
-        if (!waResultActionTypes.some(t => t.toLowerCase() === f.toLowerCase())) {
-          waResultActionTypes.push(f);
-        }
-      });
-
-      const leadActionTypes = [
-        'lead',
-        'onsite_conversion.lead',
-        'complete_registration',
-        'onsite_conversion.complete_registration',
-        'offsite_conversion.fb_pixel_complete_registration'
-      ];
-
-      const extractActions = (actionsInput: any, types: string[]) => {
-        const actions = normalizeActions(actionsInput);
-        return actions.reduce((acc: number, a: any) => {
-          if (!a || typeof a !== 'object') return acc;
-          const actionType = String(a.action_type || '').toLowerCase();
-          const isMatch = types.some(type => actionType === type.toLowerCase());
-          if (isMatch) {
-            const val = parseFloat(String(a.value || '0').replace(',', '.'));
-            return acc + (isNaN(val) ? 0 : val);
-          }
-          return acc;
-        }, 0);
-      };
-
-      const getWaConversations = (actionsInput: any) => {
-        return getMessagingConversationsStarted(actionsInput);
-      };
-
-      const metaMap = new Map();
-      campaignMetadata.forEach(m => metaMap.set(m.id, m));
-
-      const getCampaignContext = (campaignId: string, campaignName: string, item: any) => {
-        const metadata = metaMap.get(campaignId);
-        const name = String(campaignName || '').toLowerCase();
-        const objective = String(item.objective || metadata?.objective || '').toUpperCase();
-        const actions = item.actions || [];
-        const waConvs = getWaConversations(actions);
-        
-        let destination = "outro";
-        let inferenceSignal = "C (Nome)";
-
-        let hasWaUrl = false;
-        if (metadata) {
-          const checkUrl = (url: string) => url && waUrlMatches.some(match => url.toLowerCase().includes(match));
-          if (metadata.promoted_object?.object_store_url && checkUrl(metadata.promoted_object.object_store_url)) hasWaUrl = true;
-          metadata.adsets?.data?.forEach((as: any) => {
-            if (as.promoted_object?.object_store_url && checkUrl(as.promoted_object.object_store_url)) hasWaUrl = true;
-            as.ads?.data?.forEach((ad: any) => {
-              const link = ad.creative?.object_story_spec?.link_data?.link;
-              const ctaLink = ad.creative?.object_story_spec?.link_data?.call_to_action?.value?.link;
-              if (checkUrl(link) || checkUrl(ctaLink)) hasWaUrl = true;
-            });
-          });
-        }
-
-        if (waConvs > 0) { destination = "whatsapp"; inferenceSignal = "0 (Conversas Ativas)"; }
-        else if (hasWaUrl) { destination = "whatsapp"; inferenceSignal = "A (Metadados - URL)"; }
-        else if (objective === 'MESSAGES' || objective === 'OUTCOME_MESSAGES') { destination = "whatsapp"; inferenceSignal = "B (Objetivo)"; }
-        else if (actions.some((a: any) => String(a.action_type || '').toLowerCase().includes('messaging'))) { destination = "whatsapp"; inferenceSignal = "B (Ações de Mensagem)"; }
-        else if (name.includes('whatsapp') || name.includes('wa.me')) { destination = "whatsapp"; inferenceSignal = "C (Nome)"; }
-
-        if (isDebug) debugInfo.destination_inference[campaignId] = { destination, signal: inferenceSignal, waConvs };
-        return { destination };
-      };
-
-      const calculateResults = (item: any, context: any, dateStart: string) => {
-        const { destination } = context;
-        const actions = item.actions || [];
-        const waConvs = getWaConversations(actions);
-        const leads = extractActions(actions, leadActionTypes);
-        
-        let label = "Resultados";
-        let value = 0;
-        let sourceUsed = "N/A";
-
-        // If we have WhatsApp conversations, we prioritize them as the main result
-        // even if the destination detection was uncertain.
-        if (destination === "whatsapp" || waConvs > 0) {
-          label = "Conversas WA";
-          value = waConvs;
-          sourceUsed = "WhatsApp Actions";
-          
-          // If waConvs is 0 but we are sure it's a WhatsApp campaign, 
-          // we still keep the label but value is 0.
-        } else {
-          value = leads;
-          label = "Conversões";
-          sourceUsed = "Lead Action Types";
-        }
-
-        if (isDebug && (destination === "whatsapp" || waConvs > 0)) {
-          debugInfo.campaign_results_preview.push({ 
-            campaign_name: item.campaign_name || item.ad_name, 
-            destination, 
-            label, 
-            value, 
-            source: sourceUsed, 
-            date: dateStart, 
-            waConvs, 
-            leads,
-            raw_actions_sample: normalizeActions(actions).slice(0, 10)
-          });
-        } else if (isDebug) {
-          debugInfo.campaign_results_preview.push({ campaign_name: item.campaign_name || item.ad_name, destination, label, value, source: sourceUsed, date: dateStart, waConvs, leads });
-        }
-        return { value, label, sourceUsed };
-      };
-
-      const formattedData = rawDetailedData.map(item => {
-        const context = getCampaignContext(item.campaign_id, item.campaign_name, item);
-        const results = calculateResults(item, context, item.date_start);
-        const waConvs = getWaConversations(item.actions);
-        const leads = extractActions(item.actions, leadActionTypes);
-
-        return {
-          ...item,
-          results_value: results.value,
-          results_label: results.label,
-          whatsapp_conversations: waConvs,
-          leads: leads,
-          spend: parseFloat(item.spend || 0),
-          impressions: parseInt(item.impressions || 0),
-          clicks: parseInt(item.clicks || 0),
-          reach: parseInt(item.reach || 0),
-          frequency: parseFloat(item.frequency || 0),
-          cpm: parseFloat(item.cpm || 0),
-          ctr: parseFloat(item.ctr || 0)
-        };
-      });
-
-      const totalWaConvsFromSummary = getWaConversations(summaryData.actions || []);
-      const totalLeadsFromSummary = extractActions(summaryData.actions || [], leadActionTypes);
-
-      const totalWaConvs = totalWaConvsFromSummary > 0 
-        ? totalWaConvsFromSummary 
-        : rawCampaignData.reduce((acc, item) => acc + getWaConversations(item.actions), 0);
-        
-      const totalLeads = totalLeadsFromSummary > 0
-        ? totalLeadsFromSummary
-        : rawCampaignData.reduce((acc, item) => acc + extractActions(item.actions, leadActionTypes), 0);
-
-      // 7. Processar Campanhas (Usando Totais para Alcance/Frequência se disponível)
-      const campaignInsightsMap = new Map();
-      
-      // Primeiro, inicializar com os totais precisos do período
-      campaignTotals.forEach(item => {
-        const id = item.campaign_id;
-        const context = getCampaignContext(id, item.campaign_name, item);
-        const results = calculateResults(item, context, item.date_start);
-        const waConvs = getWaConversations(item.actions);
-        const leads = extractActions(item.actions, leadActionTypes);
-        
-        campaignInsightsMap.set(id, {
-          campanha_id_externo: id,
-          campanha_nome: item.campaign_name,
-          investimento: parseFloat(item.spend || 0),
-          cliques: parseInt(item.clicks || 0),
-          conversoes: leads,
-          impressoes: parseInt(item.impressions || 0),
-          reach: parseInt(item.reach || 0),
-          frequency: parseFloat(item.frequency || 0),
-          whatsapp_conversations: waConvs,
-          resultados: results.value,
-          resultados_label: results.label,
-          plataforma: 'meta'
-        });
-      });
-
-      // Se não houver totais (erro ou vazio), usar agregação dos dados diários (menos preciso para reach/frequency)
-      if (campaignInsightsMap.size === 0) {
-        rawCampaignData.forEach(item => {
-          const id = item.campaign_id;
-          const context = getCampaignContext(id, item.campaign_name, item);
-          const results = calculateResults(item, context, item.date_start);
-          const waConvs = getWaConversations(item.actions);
-          const leads = extractActions(item.actions, leadActionTypes);
-
-          if (!campaignInsightsMap.has(id)) {
-            campaignInsightsMap.set(id, {
-              campanha_id_externo: id,
-              campanha_nome: item.campaign_name,
-              investimento: 0,
-              cliques: 0,
-              conversoes: 0,
-              impressoes: 0,
-              reach: 0,
-              frequency: 0,
-              whatsapp_conversations: 0,
-              resultados: 0,
-              resultados_label: results.label,
-              plataforma: 'meta'
-            });
-          }
-
-          const entry = campaignInsightsMap.get(id);
-          entry.investimento += parseFloat(item.spend || 0);
-          entry.cliques += parseInt(item.clicks || 0);
-          entry.conversoes += leads;
-          entry.impressoes += parseInt(item.impressions || 0);
-          entry.reach += parseInt(item.reach || 0);
-          entry.whatsapp_conversations += waConvs;
-          entry.resultados += results.value;
-        });
-      }
-
-      // 8. Formatar Dados de Anúncios (Usando Totais para Rankings se disponível)
-      const adTotalsMap = new Map();
-      adTotals.forEach(item => {
-        const context = getCampaignContext(item.campaign_id, item.campaign_name, item);
-        const results = calculateResults(item, context, item.date_start);
-        const waConvs = getWaConversations(item.actions);
-        adTotalsMap.set(item.ad_id, {
-          ...item,
-          conversoes: extractActions(item.actions, leadActionTypes),
-          whatsapp_conversations: waConvs,
-          resultados: results.value,
-          resultados_label: results.label,
-          frequency: parseFloat(item.frequency || 0),
-          reach: parseInt(item.reach || 0),
-          investimento: parseFloat(item.spend || 0),
-          cliques: parseInt(item.clicks || 0),
-          impressoes: parseInt(item.impressions || 0)
-        });
-      });
-
-      const response = {
-        summary: {
-          reach: parseInt(summaryData.reach || 0),
-          frequency: parseFloat(summaryData.frequency || 0),
-          impressions: parseInt(summaryData.impressions || 0),
-          clicks: parseInt(summaryData.clicks || 0),
-          spend: parseFloat(summaryData.spend || 0),
-          leads: totalLeads,
-          whatsapp_conversations: totalWaConvs
-        },
-        data: formattedData,
-        ad_totals: Array.from(adTotalsMap.values()),
-        campaigns: Array.from(campaignInsightsMap.values()),
-        debug: debugInfo
-      };
-
-      res.json(response);
-    } catch (error: any) {
-      console.error("[MetaAds] Erro crítico na API de Insights:", error?.response?.data || error.message);
-      res.status(500).json({ 
-        error: "Erro ao buscar dados do Meta Ads",
-        details: error?.response?.data || error.message
-      });
-    }
-  });
-
-  // Meta Ads OAuth (Legacy/Internal - Keeping for compatibility if needed)
 
   // Google Ads OAuth
   app.get("/api/auth/google/url", (req, res) => {
+    const { cliente_id, origin } = req.query;
+
     try {
-      const { cliente_id, origin } = req.query;
-      console.log("[GoogleAds] Generating Auth URL for:", cliente_id);
-
-      if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-        console.error("[GoogleAds] Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET");
-        return res.status(500).json({ error: "Configuração do Google Ads incompleta no servidor." });
-      }
-
-      // Use a fixed redirect URI if provided, otherwise fallback to dynamic
       let redirectUri = process.env.GOOGLE_REDIRECT_URI;
-      
       if (!redirectUri) {
         const rawBaseUrl = (origin as string) || process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
-        // Clean up: remove trailing slash and ensure https
-        let cleanBaseUrl = rawBaseUrl.replace(/\/$/, "");
+        let cleanBaseUrl = rawBaseUrl.replace(/\/
+$
+/, "");
         if (!cleanBaseUrl.startsWith("http")) {
           cleanBaseUrl = `https://${cleanBaseUrl}`;
         } else if (cleanBaseUrl.startsWith("http://") && !cleanBaseUrl.includes("localhost")) {
@@ -987,7 +464,7 @@ async function startServer() {
         redirectUri = `${cleanBaseUrl}/api/auth/google/callback`;
       }
 
-      console.log("[GoogleAds] Final Redirect URI:", redirectUri);
+      console.log("[GoogleAds] URL Generation - Redirect URI:", redirectUri);
 
       const client = new OAuth2Client(
         process.env.GOOGLE_CLIENT_ID,
@@ -998,10 +475,10 @@ async function startServer() {
       const url = client.generateAuthUrl({
         access_type: "offline",
         scope: ["https://www.googleapis.com/auth/adwords"],
-        prompt: "consent",
-        state: cliente_id as string
+        state: cliente_id as string,
+        prompt: "consent"
       });
-      
+
       res.json({ url });
     } catch (error: any) {
       console.error("[GoogleAds] Erro ao gerar URL:", error);
@@ -1020,7 +497,9 @@ async function startServer() {
       let redirectUri = process.env.GOOGLE_REDIRECT_URI;
       if (!redirectUri) {
         const rawBaseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
-        let cleanBaseUrl = rawBaseUrl.replace(/\/$/, "");
+        let cleanBaseUrl = rawBaseUrl.replace(/\/
+$
+/, "");
         if (!cleanBaseUrl.startsWith("http")) {
           cleanBaseUrl = `https://${cleanBaseUrl}`;
         } else if (cleanBaseUrl.startsWith("http://") && !cleanBaseUrl.includes("localhost")) {
@@ -1039,7 +518,7 @@ async function startServer() {
 
       const { tokens } = await client.getToken(code as string);
       console.log("[GoogleAds] Tokens received successfully");
-      
+
       const accessToken = tokens.access_token;
       const refreshToken = tokens.refresh_token;
       const adAccounts: any[] = [];
@@ -1050,9 +529,9 @@ async function startServer() {
         if (devToken && accessToken) {
           const apiVersion = "v18";
           const listUrl = `https://googleads.googleapis.com/${apiVersion}/customers:listAccessibleCustomers`;
-          
+
           console.log(`[GoogleAds] Buscando contas acessíveis (${apiVersion})...`);
-          
+
           const headers = {
             Authorization: `Bearer ${accessToken}`,
             'developer-token': devToken
@@ -1069,7 +548,7 @@ async function startServer() {
               Authorization: "Bearer [REDACTED]",
               'developer-token': devToken.substring(0, 4) + "..."
             })}`);
-            
+
             if (err.response) {
               console.error(`[GoogleAds] Status do erro: ${err.response.status}`);
               console.error(`[GoogleAds] Dados do erro: ${JSON.stringify(err.response.data)}`);
@@ -1116,7 +595,7 @@ async function startServer() {
       } catch (fetchError) {
         console.error("[GoogleAds] Falha na busca de contas.");
       }
-      
+
       // Save refresh token
       if (clienteId && clienteId !== "undefined" && refreshToken) {
         await adminDb.collection("clientes").doc(clienteId).set({
@@ -1193,7 +672,7 @@ async function startServer() {
 
   app.post("/api/v1/busca-ia", apiKeyAuth, async (req, res) => {
     const { query: userQuery, cliente_id, modo = "enxuto" } = req.body;
-    
+
     if (!userQuery) return res.status(400).json({ error: "Query é obrigatória" });
 
     try {
@@ -1226,7 +705,7 @@ async function startServer() {
       let q = adminDb.collection("dados_campanhas") as any;
       if (cliente_id) q = q.where("cliente_id", "==", cliente_id);
       if (filtros.plataforma) q = q.where("plataforma", "==", filtros.plataforma === "meta" ? "meta_ads" : "google_ads");
-      
+
       const snap = await q.limit(20).get();
       const dadosRelevantes = snap.docs.map(doc => doc.data());
 
@@ -1264,6 +743,60 @@ async function startServer() {
     }
   });
 
+  // --- META ADS INSIGHTS (ENDPOINT RESTAURADO) ---
+  app.get("/api/meta/insights", async (req, res) => {
+    const { cliente_id, ad_account_id, since, until, level = 'campaign' } = req.query;
+
+    if (!ad_account_id) {
+      return res.status(400).json({ error: "Parâmetro 'ad_account_id' é obrigatório." });
+    }
+
+    try {
+      let accessToken = process.env.META_ACCESS_TOKEN; 
+
+      if (cliente_id && cliente_id !== "undefined") {
+        const clienteSnap = await adminDb.collection("clientes").doc(cliente_id as string).get();
+        if (clienteSnap.exists && clienteSnap.data()?.meta_ads_access_token) {
+          accessToken = clienteSnap.data()?.meta_ads_access_token;
+        }
+      }
+
+      if (!accessToken) {
+        return res.status(400).json({ error: "Access token do Meta não encontrado para este cliente." });
+      }
+
+      const baseParams = {
+        level,
+        fields: "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressions,clicks,reach,actions,date_start,date_stop",
+        limit: 50
+      };
+
+      const result = await MetaAdsService.getInsightsInChunks(
+        accessToken,
+        ad_account_id as string,
+        level as string,
+        since as string,
+        until as string,
+        baseParams,
+        true 
+      );
+
+      // Injeta o cálculo de WA diretamente no retorno para o frontend
+      const processedData = result.data.map((item: any) => {
+        const wa_conversations = getWaConversations(item.actions);
+        return {
+          ...item,
+          wa_conversations
+        };
+      });
+
+      res.json({ data: processedData, debug: result.debug });
+    } catch (error: any) {
+      console.error("[MetaAds] Erro ao buscar insights:", error);
+      res.status(500).json({ error: "Erro ao buscar dados do Meta Ads", details: error.message });
+    }
+  });
+
   // --- GOOGLE ADS INSIGHTS ---
   app.get("/api/google/insights", async (req, res) => {
     const { customer_id, date_preset, since, until } = req.query;
@@ -1285,7 +818,7 @@ async function startServer() {
       const googleAccSnap = await adminDb.collection("google_ads_accounts").doc(customer_id as string).get();
       let refreshToken = "";
 
-      if (googleAccSnap.exists()) {
+      if (googleAccSnap.exists) {
         refreshToken = googleAccSnap.data()?.refresh_token || "";
       }
 
@@ -1297,7 +830,7 @@ async function startServer() {
           .where("refresh_token", "!=", "")
           .limit(1)
           .get();
-        
+
         if (!allAccsSnap.empty) {
           refreshToken = allAccsSnap.docs[0].data().refresh_token;
           console.log(`[GoogleAds] Usando refresh token da conta: ${allAccsSnap.docs[0].id}`);
@@ -1381,7 +914,7 @@ async function startServer() {
       const mappedData = results.map((row: any) => {
         const spend = (parseFloat(row.metrics.costMicros || 0) / 1000000);
         const conversions = parseFloat(row.metrics.conversions || 0);
-        
+
         return {
           campaign_id: row.campaign.id,
           campaign_name: row.campaign.name,
