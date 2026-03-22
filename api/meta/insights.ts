@@ -2,91 +2,83 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import axios from 'axios';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  // Habilitar CORS
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
+  );
+
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
   }
 
-  const { access_token, ad_account_id, date_preset, since, until } = req.query;
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
 
-  if (!access_token || !ad_account_id) {
-    return res.status(400).json({ 
-      error: "Parâmetros 'access_token' e 'ad_account_id' são obrigatórios." 
-    });
+  const { ad_account_id, access_token, since, until, date_preset } = req.query;
+
+  if (!ad_account_id || !access_token) {
+    return res.status(400).json({ error: "Parâmetros 'ad_account_id' e 'access_token' são obrigatórios." });
   }
 
   try {
-    const accountId = (ad_account_id as string).startsWith('act_') ? ad_account_id : `act_${ad_account_id}`;
-    
-    // Configurar parâmetros de data
-    const timeRange = (since && until) ? JSON.stringify({ since, until }) : null;
-    const datePreset = (date_preset as string) || 'last_30d';
+    const baseUrl = `https://graph.facebook.com/v19.0/${ad_account_id}/insights`;
 
-    // Chamada 1: Resumo da Conta (para Alcance e Frequência precisos)
+    // 1. Buscar Resumo Total (Summary)
     const summaryParams: any = {
+      access_token,
       fields: 'reach,frequency,impressions,clicks,spend,actions',
-      level: 'account',
+      level: 'account'
     };
-    if (timeRange) summaryParams.time_range = timeRange;
-    else summaryParams.date_preset = datePreset;
 
-    // Chamada 2: Detalhado por Anúncio e Dia (para Gráficos e Rankings)
+    if (date_preset) {
+      summaryParams.date_preset = date_preset;
+    } else if (since && until) {
+      summaryParams.time_range = JSON.stringify({ since, until });
+    } else {
+      summaryParams.date_preset = 'last_30d';
+    }
+
+    const summaryResponse = await axios.get(baseUrl, { params: summaryParams });
+    const summaryData = summaryResponse.data.data[0] || {};
+
+    // 2. Buscar Dados Detalhados (Por dia e campanha)
     const detailedParams: any = {
-      fields: 'campaign_name,adset_name,ad_name,campaign_id,adset_id,ad_id,impressions,clicks,spend,reach,frequency,actions,cost_per_action_type,cpm,cpp,ctr,cpc',
+      access_token,
+      fields: 'campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,impressions,clicks,reach,frequency,spend,actions,cpm,ctr,cpc',
       level: 'ad',
       time_increment: 1,
-      limit: 1000 // Reduzido de 5000 para evitar timeouts
+      limit: 100
     };
-    if (timeRange) detailedParams.time_range = timeRange;
-    else detailedParams.date_preset = datePreset;
 
-    // Se for "maximum", a Meta API não permite time_increment: 1 se o período for > 37 meses.
-    // Vamos tentar com time_increment: 1 primeiro, e se falhar, tentamos sem o incremento diário.
-    if (datePreset === 'maximum') {
-      console.log("[MetaAds] Detectado preset 'maximum'. Tentando busca resiliente.");
+    if (date_preset) {
+      detailedParams.date_preset = date_preset;
+    } else if (since && until) {
+      detailedParams.time_range = JSON.stringify({ since, until });
+    } else {
+      detailedParams.date_preset = 'last_30d';
     }
 
-    console.log(`[MetaAds] Buscando dados para ${accountId} com preset ${datePreset} e time_range ${timeRange}`);
-
-    let summaryData: any = {};
     let rawDetailedData: any[] = [];
-
-    try {
-      const summaryRes = await axios.get(`https://graph.facebook.com/v19.0/${accountId}/insights`, {
-        headers: { Authorization: `Bearer ${access_token}` },
-        params: summaryParams
-      });
-      summaryData = summaryRes.data.data?.[0] || {};
-    } catch (summaryError: any) {
-      console.warn(`[MetaAds] Falha ao buscar resumo da conta:`, summaryError?.response?.data || summaryError.message);
-    }
 
     const fetchDetailedData = async (params: any) => {
       let results: any[] = [];
-      let nextUrl = `https://graph.facebook.com/v19.0/${accountId}/insights`;
+      let currentUrl = baseUrl;
+      let currentParams = { ...params };
       let hasNextPage = true;
-      let pageCount = 0;
-      const maxPages = 20; // Aumentado para compensar o limite menor por página
 
-      while (hasNextPage && pageCount < maxPages) {
-        const config: any = {
-          headers: { 
-            'Authorization': `Bearer ${access_token}`,
-            'Accept': 'application/json'
-          },
-          timeout: 45000 // Aumentado para 45s
-        };
-        
-        if (pageCount === 0) {
-          config.params = params;
-        }
+      while (hasNextPage) {
+        const response = await axios.get(currentUrl, { params: currentParams });
+        results = results.concat(response.data.data || []);
 
-        const detailedRes = await axios.get(nextUrl, config);
-        const pageData = detailedRes.data.data || [];
-        results = [...results, ...pageData];
-        
-        if (detailedRes.data.paging?.next && pageData.length > 0) {
-          nextUrl = detailedRes.data.paging.next;
-          pageCount++;
+        if (response.data.paging && response.data.paging.next) {
+          currentUrl = response.data.paging.next;
+          currentParams = {}; 
         } else {
           hasNextPage = false;
         }
@@ -99,9 +91,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (detailedError: any) {
       const errorData = detailedError?.response?.data || detailedError.message;
       const errorMessage = errorData?.error?.message || "";
-      
-      // Se o erro for relacionado ao limite de 37 meses ou timeout, tenta sem o incremento diário
-      if (errorMessage.includes("37 months") || datePreset === 'maximum' || detailedError.code === 'ECONNABORTED') {
+
+      if (errorMessage.includes("37 months") || date_preset === 'maximum' || detailedError.code === 'ECONNABORTED') {
         console.warn(`[MetaAds] Falha na busca detalhada com time_increment: 1. Tentando com 'all_days'. Erro:`, errorMessage);
         try {
           const fallbackParams = { ...detailedParams, time_increment: 'all_days' };
@@ -123,10 +114,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Tipos de ações de conversão (leads)
+    // --- CORREÇÃO: SEPARANDO LEADS DE WHATSAPP ---
+
+    // 1. Tipos de ações de conversão (leads normais) - REMOVIDO O WHATSAPP DAQUI
     const leadActionTypes = [
       'lead', 
-      'onsite_conversion.messaging_conversation_started_7d', 
       'contact', 
       'submit_form', 
       'complete_registration', 
@@ -138,8 +130,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       'app_custom_event.fb_mobile_complete_registration'
     ];
 
+    // 2. Função auxiliar para somar WhatsApp (pega qualquer variação, incluindo _7d)
+    const getWaConversations = (actions: any[]): number => {
+      if (!actions || !Array.isArray(actions)) return 0;
+      return actions.reduce((acc: number, a: any) => {
+        if (String(a.action_type || "").startsWith("onsite_conversion.messaging_conversation_started")) {
+          const val = parseFloat(a.value || 0);
+          return acc + (isNaN(val) ? 0 : val);
+        }
+        return acc;
+      }, 0);
+    };
+
     // Formatar o JSON de retorno
     const formattedData = rawDetailedData.map((item: any) => {
+      // Calcula Leads Normais
       const leads = item.actions?.reduce((acc: number, a: any) => {
         if (leadActionTypes.includes(a.action_type)) {
           const val = parseFloat(a.value || 0);
@@ -147,6 +152,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         return acc;
       }, 0) || 0;
+
+      // Calcula WhatsApp
+      const wa_conversations = getWaConversations(item.actions);
 
       const spend = parseFloat(item.spend || 0);
       const safeSpend = isNaN(spend) ? 0 : spend;
@@ -165,6 +173,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         frequency: parseFloat(item.frequency || 0),
         spend: safeSpend.toFixed(2),
         leads: leads,
+        wa_conversations: wa_conversations, // Adicionado aqui!
         cost_per_lead: leads > 0 ? (safeSpend / leads).toFixed(2) : "0.00",
         cpm: parseFloat(item.cpm || 0),
         ctr: parseFloat(item.ctr || 0),
@@ -181,18 +190,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return acc;
     }, 0) || 0;
 
+    const totalWaConversations = getWaConversations(summaryData.actions); // Adicionado aqui!
+
     const totalSpend = parseFloat(summaryData.spend || 0);
     const safeTotalSpend = isNaN(totalSpend) ? 0 : totalSpend;
 
     res.status(200).json({
       summary: {
-        period: datePreset || `${since} to ${until}`,
+        period: date_preset || `${since} to ${until}`,
         reach: parseInt(summaryData.reach || 0),
         frequency: parseFloat(summaryData.frequency || 0),
         impressions: parseInt(summaryData.impressions || 0),
         clicks: parseInt(summaryData.clicks || 0),
         spend: safeTotalSpend.toFixed(2),
         leads: totalLeads,
+        wa_conversations: totalWaConversations, // Adicionado aqui!
         count: formattedData.length
       },
       data: formattedData
