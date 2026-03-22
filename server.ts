@@ -591,67 +591,16 @@ async function startServer() {
 
       const getMessagingConversationsStarted = (actionsInput: any): number => {
         const actions = normalizeActions(actionsInput);
-        let total = 0;
-        let foundPrimary = false;
-
-        // 1. First pass: Look for standard "messaging_conversation_started" types
-        for (const a of actions) {
-          if (!a || typeof a !== 'object') continue;
-          const actionType = String(a.action_type || '').toLowerCase();
-          
-          // Be very aggressive: match anything containing "messaging_conversation_started"
-          if (actionType.includes("messaging_conversation_started")) {
-            
-            let val = 0;
-            if (typeof a.value === 'number') {
-              val = a.value;
-            } else if (Array.isArray(a.value)) {
-              val = a.value.reduce((sum: number, v: any) => {
-                const innerVal = parseFloat(String(v.value || v || '0').replace(',', '.'));
-                return sum + (isNaN(innerVal) ? 0 : innerVal);
-              }, 0);
-            } else {
-              val = parseFloat(String(a.value || '0').replace(',', '.'));
-            }
-            
-            if (!isNaN(val) && val > 0) {
-              total += val;
-              foundPrimary = true;
-            }
+        if (!actions || !Array.isArray(actions)) return 0;
+        return actions.reduce((acc: number, a: any) => {
+          if (!a || typeof a !== 'object') return acc;
+          const actionType = String(a.action_type || "").toLowerCase();
+          if (actionType.startsWith("onsite_conversion.messaging_conversation_started")) {
+            const val = parseFloat(String(a.value || '0').replace(',', '.'));
+            return acc + (isNaN(val) ? 0 : val);
           }
-        }
-
-        // 2. Second pass: If no primary found, look for "total_messaging_connection" or "first_reply" or "messaging_welcome_message_view"
-        // These are often used as proxies or fallbacks in some Meta API versions/account types
-        if (!foundPrimary || total === 0) {
-          for (const a of actions) {
-            if (!a || typeof a !== 'object') continue;
-            const actionType = String(a.action_type || '').toLowerCase();
-            
-            if (actionType.includes("total_messaging_connection") || 
-                actionType.includes("messaging_first_reply") ||
-                actionType.includes("messaging_welcome_message_view")) {
-              
-              let val = 0;
-              if (typeof a.value === 'number') {
-                val = a.value;
-              } else if (Array.isArray(a.value)) {
-                val = a.value.reduce((sum: number, v: any) => {
-                  const innerVal = parseFloat(String(v.value || v || '0').replace(',', '.'));
-                  return sum + (isNaN(innerVal) ? 0 : innerVal);
-                }, 0);
-              } else {
-                val = parseFloat(String(a.value || '0').replace(',', '.'));
-              }
-              
-              if (!isNaN(val) && val > 0) {
-                total += val;
-              }
-            }
-          }
-        }
-
-        return total;
+          return acc;
+        }, 0);
       };
 
       const debugInfo: any = isDebug ? {
@@ -711,11 +660,13 @@ async function startServer() {
       });
 
       const leadActionTypes = [
-        'lead',
-        'onsite_conversion.lead',
-        'complete_registration',
-        'onsite_conversion.complete_registration',
-        'offsite_conversion.fb_pixel_complete_registration'
+        'lead', 
+        'contact', 
+        'submit_form', 
+        'complete_registration', 
+        'offsite_conversion.fb_pixel_lead',
+        'offsite_conversion.fb_pixel_complete_registration', 
+        'app_custom_event.fb_mobile_complete_registration'
       ];
 
       const extractActions = (actionsInput: any, types: string[]) => {
