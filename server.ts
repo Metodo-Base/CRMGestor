@@ -538,12 +538,32 @@ async function startServer() {
       };
 
       const getWaConversations = (actions: any[]) => {
-        // Try each action type in order of priority and return the first one that has a value > 0
-        // This avoids double counting if multiple types are present but ensures we find the data.
+        if (!actions || !Array.isArray(actions)) return 0;
+
+        // 1. Try explicit types first (order of priority)
         for (const type of waResultActionTypes) {
           const val = extractActions(actions, [type]);
           if (val > 0) return val;
         }
+        
+        // 2. Fallback: Look for ANY action that contains "messaging" AND ("started" OR "conversation")
+        // This is a safety net for accounts using non-standard or newer action types.
+        const messagingActions = actions.filter(a => {
+          const t = String(a.action_type || '').toLowerCase();
+          return t.includes('messaging') && (t.includes('started') || t.includes('conversation'));
+        });
+
+        if (messagingActions.length > 0) {
+          // Sort by value descending to pick the most significant metric if multiple exist
+          // and we haven't matched our primary ones.
+          const bestMatch = messagingActions.sort((a, b) => 
+            parseFloat(String(b.value || 0)) - parseFloat(String(a.value || 0))
+          )[0];
+          
+          const val = parseFloat(String(bestMatch.value).replace(',', '.') || '0');
+          return isNaN(val) ? 0 : val;
+        }
+        
         return 0;
       };
 
@@ -635,8 +655,16 @@ async function startServer() {
         };
       });
 
-      const totalWaConvs = rawCampaignData.reduce((acc, item) => acc + getWaConversations(item.actions), 0);
-      const totalLeads = rawCampaignData.reduce((acc, item) => acc + extractActions(item.actions, leadActionTypes), 0);
+      const totalWaConvsFromSummary = getWaConversations(summaryData.actions || []);
+      const totalLeadsFromSummary = extractActions(summaryData.actions || [], leadActionTypes);
+
+      const totalWaConvs = totalWaConvsFromSummary > 0 
+        ? totalWaConvsFromSummary 
+        : rawCampaignData.reduce((acc, item) => acc + getWaConversations(item.actions), 0);
+        
+      const totalLeads = totalLeadsFromSummary > 0
+        ? totalLeadsFromSummary
+        : rawCampaignData.reduce((acc, item) => acc + extractActions(item.actions, leadActionTypes), 0);
 
       // 7. Processar Campanhas (Usando Totais para Alcance/Frequência se disponível)
       const campaignInsightsMap = new Map();
