@@ -288,6 +288,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
                       conversoes: parseInt(insight.leads || 0),
                       resultados: parseInt(insight.results_value || 0),
                       resultados_label: insight.results_label || "Resultados",
+                      whatsapp_conversations: parseInt(insight.wa_conversations || insight.whatsapp_conversations || 0),
                       alcance: parseInt(insight.reach || 0),
                       frequencia: parseFloat(insight.frequency || 0),
                       cpc: parseFloat(insight.cpc || 0),
@@ -318,6 +319,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
                           cliques: parseInt(insight.clicks || 0),
                           conversoes: parseInt(insight.leads || 0),
                           resultados: parseInt(insight.results_value || 0),
+                          whatsapp_conversations: parseInt(insight.wa_conversations || insight.whatsapp_conversations || 0),
                           alcance: parseInt(insight.reach || 0),
                           created_at: new Date().toISOString(),
                           updated_at: new Date().toISOString(),
@@ -568,7 +570,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
       currentTotals.conversoes = parseInt(summary.leads || 0);
       currentTotals.resultados = parseInt(summary.results_value || 0);
       currentTotals.alcance = parseInt(summary.reach || 0);
-      currentTotals.whatsapp_conversations = parseInt(summary.whatsapp_conversations || 0);
+      currentTotals.whatsapp_conversations = parseInt(summary.wa_conversations || summary.whatsapp_conversations || 0);
     }
 
     const calculateMetrics = (totals: any) => {
@@ -661,7 +663,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
         impressoes: c.impressoes,
         conversoes: c.conversoes,
         resultados: c.resultados,
-        whatsapp_conversations: c.whatsapp_conversations,
+        whatsapp_conversations: c.wa_conversations || c.whatsapp_conversations || 0,
         cpl: c.conversoes > 0 ? c.investimento / c.conversoes : 0,
         cpm: c.impressoes > 0 ? (c.investimento / c.impressoes) * 1000 : 0,
         ctr: c.impressoes > 0 ? (c.cliques / c.impressoes) * 100 : 0,
@@ -711,7 +713,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
         reach: r.reach,
         conversoes: r.conversoes,
         resultados: r.resultados,
-        whatsapp_conversations: r.whatsapp_conversations,
+        whatsapp_conversations: r.wa_conversations || r.whatsapp_conversations || 0,
         cpl: r.conversoes > 0 ? r.investimento / r.conversoes : 0,
         cpm: r.impressoes > 0 ? (r.investimento / r.impressoes) * 1000 : 0,
         ctr: r.impressoes > 0 ? (r.cliques / r.impressoes) * 100 : 0,
