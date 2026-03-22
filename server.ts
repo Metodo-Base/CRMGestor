@@ -520,11 +520,7 @@ async function startServer() {
         'onsite_conversion.lead',
         'complete_registration',
         'onsite_conversion.complete_registration',
-        'offsite_conversion.fb_pixel_complete_registration',
-        'onsite_conversion.messaging_conversation_started_7d',
-        'messaging_conversation_started_7d',
-        'onsite_conversion.messaging_conversation_started',
-        'messaging_conversation_started'
+        'offsite_conversion.fb_pixel_complete_registration'
       ];
 
       const extractActions = (actions: any[], types: string[]) => {
@@ -559,6 +555,8 @@ async function startServer() {
         const name = String(campaignName || '').toLowerCase();
         const objective = String(item.objective || metadata?.objective || '').toUpperCase();
         const actions = item.actions || [];
+        const waConvs = getWaConversations(actions);
+        
         let destination = "outro";
         let inferenceSignal = "C (Nome)";
 
@@ -576,40 +574,42 @@ async function startServer() {
           });
         }
 
-        if (hasWaUrl) { destination = "whatsapp"; inferenceSignal = "A (Metadados - URL)"; }
+        if (waConvs > 0) { destination = "whatsapp"; inferenceSignal = "0 (Conversas Ativas)"; }
+        else if (hasWaUrl) { destination = "whatsapp"; inferenceSignal = "A (Metadados - URL)"; }
         else if (objective === 'MESSAGES' || objective === 'OUTCOME_MESSAGES') { destination = "whatsapp"; inferenceSignal = "B (Objetivo)"; }
-        else if (actions.some((a: any) => a.action_type.includes('messaging'))) { destination = "whatsapp"; inferenceSignal = "B (Ações de Mensagem)"; }
+        else if (actions.some((a: any) => String(a.action_type || '').toLowerCase().includes('messaging'))) { destination = "whatsapp"; inferenceSignal = "B (Ações de Mensagem)"; }
         else if (name.includes('whatsapp') || name.includes('wa.me')) { destination = "whatsapp"; inferenceSignal = "C (Nome)"; }
 
-        if (isDebug) debugInfo.destination_inference[campaignId] = { destination, signal: inferenceSignal };
+        if (isDebug) debugInfo.destination_inference[campaignId] = { destination, signal: inferenceSignal, waConvs };
         return { destination };
       };
 
       const calculateResults = (item: any, context: any, dateStart: string) => {
         const { destination } = context;
         const actions = item.actions || [];
+        const waConvs = getWaConversations(actions);
+        const leads = extractActions(actions, leadActionTypes);
+        
         let label = "Resultados";
         let value = 0;
         let sourceUsed = "N/A";
 
-        if (destination === "whatsapp") {
+        // If we have WhatsApp conversations, we prioritize them as the main result
+        // even if the destination detection was uncertain.
+        if (destination === "whatsapp" || waConvs > 0) {
           label = "Conversas WA";
-          // Use the robust getWaConversations logic
-          for (const type of waResultActionTypes) {
-            const val = extractActions(actions, [type]);
-            if (val > 0) {
-              value = val;
-              sourceUsed = type;
-              break;
-            }
-          }
+          value = waConvs;
+          sourceUsed = "WhatsApp Actions";
+          
+          // If waConvs is 0 but we are sure it's a WhatsApp campaign, 
+          // we still keep the label but value is 0.
         } else {
-          value = extractActions(actions, leadActionTypes);
+          value = leads;
           label = "Conversões";
           sourceUsed = "Lead Action Types";
         }
 
-        if (isDebug) debugInfo.campaign_results_preview.push({ campaign_name: item.campaign_name || item.ad_name, destination, label, value, source: sourceUsed, date: dateStart });
+        if (isDebug) debugInfo.campaign_results_preview.push({ campaign_name: item.campaign_name || item.ad_name, destination, label, value, source: sourceUsed, date: dateStart, waConvs, leads });
         return { value, label, sourceUsed };
       };
 
