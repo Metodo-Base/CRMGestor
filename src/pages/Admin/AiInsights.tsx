@@ -2,6 +2,7 @@ import { useState, useEffect, ReactNode } from "react";
 import { collection, onSnapshot, query, orderBy, getDocs, doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "../../firebase";
 import { Cliente } from "../../types";
+import OpenAI from "openai";
 import { 
   Brain, 
   Calendar, 
@@ -57,6 +58,10 @@ import {
 
 interface AiAnalysis {
   resumo_executivo: string;
+  saude_metricas: string;
+  pontos_fortes: string;
+  gargalos_fugas: string;
+  plano_acao_gerencial: string;
   funil_trafego: {
     etapa: string;
     valor: number;
@@ -118,7 +123,8 @@ interface CampaignData {
   clicks: number;
   ctr: number;
   cpm: number;
-  results: number;
+  results: number; // Leads (Cadastros)
+  wa_conversations: number; // Conversas WA
   costPerResult: number;
   frequency: number;
   reach: number;
@@ -182,7 +188,17 @@ export default function AiInsights() {
       if (snap.exists()) {
         const data = snap.data();
         setApiKey(data.api_key_ia || "");
-        setPrompt(data.prompt_analise || "Você é um especialista em tráfego pago e marketing digital. Analise os seguintes dados de campanhas e forneça um relatório detalhado com resumo de performance, pontos fortes, oportunidades de melhoria e sugestões práticas de otimização.");
+        setPrompt(data.prompt_analise || `Atue como um Estrategista Sênior de Tráfego Pago e Especialista em Conversão, com ampla experiência em otimização de campanhas digitais e geração de leads. Vou te fornecer os dados de performance das campanhas de anúncios do meu cliente, cujo objetivo principal é a geração de Contatos/Cadastros (Leads) e Conversas no WhatsApp. 
+
+Por favor, analise os dados fornecidos e crie um relatório gerencial detalhado, profissional e didático, que esteja pronto para ser apresentado ao cliente final. 
+
+Estruture sua resposta obrigatoriamente nos seguintes tópicos:
+
+1. Resumo Executivo: Forneça uma visão geral em um parágrafo sobre o desempenho geral do período, comparando o Investimento total com o Volume de conversões geradas.
+2. Saúde das Métricas: Realize uma avaliação crítica do Custo por Contato (CPA), da Taxa de Clique (CTR) e da proporção entre Cliques no Link e Conversões reais (WhatsApp/Leads). Os custos estão saudáveis?
+3. Pontos Fortes: Destaque as campanhas ou anúncios específicos que estão gerando os melhores resultados, explicando o motivo provável para isso.
+4. Gargalos e Fugas de Verba: Identifique áreas onde estamos perdendo dinheiro, como campanhas com alto gasto e baixo retorno, ou anúncios com CTR elevado que não resultam em conversões na Landing Page ou no WhatsApp.
+5. Plano de Ação Prático: Forneça de 3 a 5 recomendações diretas e acionáveis para otimização imediata, como pausar campanhas ineficazes, realocar orçamento, testar novos criativos ou melhorar a proposta da landing page.`);
       }
     };
     loadConfig();
@@ -230,7 +246,7 @@ export default function AiInsights() {
     }
 
     if (!apiKey) {
-      setError("Por favor, configure a chave da API do OpenAI primeiro.");
+      setError("Por favor, configure a chave da API da OpenAI primeiro.");
       setShowConfig(true);
       return;
     }
@@ -268,23 +284,25 @@ export default function AiInsights() {
         return;
       }
 
-      // 4. Prepare data for UI and OpenAI
+      // 4. Prepare data for UI and AI
       const mappedInsights: CampaignData[] = insights.map((i: any) => {
         const spend = Number(i.spend || 0);
         const impressions = Number(i.impressions || 0);
         const clicks = Number(i.clicks || 0);
-        const results = Number(i.leads || i.conversions || i.actions?.find((a: any) => a.action_type === 'onsite_conversion.messaging_first_reply')?.value || 0);
+        const results = Number(i.leads || 0);
+        const wa_conversations = Number(i.wa_conversations || 0);
+        const total_conversions = results + wa_conversations;
         
         return {
           name: i.campaign_name,
           spend,
           impressions,
           clicks,
-          // Calculate CTR manually to avoid API formatting issues (e.g. 413% vs 4.13%)
           ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
           cpm: impressions > 0 ? (spend / impressions) * 1000 : 0,
           results,
-          costPerResult: results > 0 ? spend / results : 0,
+          wa_conversations,
+          costPerResult: total_conversions > 0 ? spend / total_conversions : 0,
           frequency: Number(i.frequency || 1),
           reach: Number(i.reach || 0)
         };
@@ -297,7 +315,9 @@ export default function AiInsights() {
       const totalImpressions = mappedInsights.reduce((acc, curr) => acc + curr.impressions, 0);
       const totalClicks = mappedInsights.reduce((acc, curr) => acc + curr.clicks, 0);
       const totalResults = mappedInsights.reduce((acc, curr) => acc + curr.results, 0);
+      const totalWaConversations = mappedInsights.reduce((acc, curr) => acc + curr.wa_conversations, 0);
       const totalReach = mappedInsights.reduce((acc, curr) => acc + curr.reach, 0);
+      const totalConversions = totalResults + totalWaConversations;
       
       setTotals({
         spend: totalSpend,
@@ -308,95 +328,91 @@ export default function AiInsights() {
         ctr: (totalClicks / totalImpressions) * 100 || 0,
         cpm: (totalSpend / totalImpressions) * 1000 || 0,
         results: totalResults,
-        costPerResult: totalSpend / totalResults || 0
+        costPerResult: totalSpend / totalConversions || 0
       });
 
       const dataString = JSON.stringify(mappedInsights, null, 2);
 
       // 5. Call OpenAI API
-      const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
+      const openai = new OpenAI({
+        apiKey: apiKey,
+        dangerouslyAllowBrowser: true
+      });
+      
+      const systemInstruction = `Você é um Estrategista Sênior de Tráfego Pago e Especialista em Conversão. 
+      Sua tarefa é analisar os dados e gerar um RELATÓRIO GERENCIAL DETALHADO seguindo a estrutura JSON.
+      Foque em clareza, didática e insights acionáveis.
+      Use uma linguagem profissional e executiva.`;
+
+      const userPrompt = `${prompt}
+      
+      Dados das campanhas do cliente ${clientData.nome_cliente}:
+      ${dataString}
+      
+      Observação: 'results' refere-se a Cadastros/Leads e 'wa_conversations' refere-se a Conversas no WhatsApp.
+      
+      Retorne o resultado EXATAMENTE no seguinte formato JSON:
+      {
+        "resumo_executivo": "Texto do Resumo Executivo (Tópico 1)",
+        "saude_metricas": "Texto da Análise de Saúde das Métricas (Tópico 2)",
+        "pontos_fortes": "Texto dos Pontos Fortes (Tópico 3)",
+        "gargalos_fugas": "Texto dos Gargalos e Fugas de Verba (Tópico 4)",
+        "plano_acao_gerencial": "Texto do Plano de Ação Prático (Tópico 5)",
+        "funil_trafego": [
+          { "etapa": "Impressões", "valor": 100000, "porcentagem": 100, "cor": "#6366f1" },
+          { "etapa": "Cliques", "valor": 2000, "porcentagem": 2, "cor": "#8b5cf6" },
+          { "etapa": "Conversões Totais", "valor": 150, "porcentagem": 7.5, "cor": "#ec4899" }
+        ],
+        "ranking_campanhas": [
+          { "nome": "Campanha X", "metrica_principal": "CPA", "valor": 4.5, "posicao": 1 }
+        ],
+        "melhores_anuncios": [
+          { "titulo": "Criativo Vídeo A", "performance": "Excelente", "ctr": 2.5, "custo_resultado": 8.5 }
+        ],
+        "diagnostico_detalhado": {
+          "campanhas": [
             {
-              role: "system",
-              content: `Você é um analista sênior de tráfego pago. 
-              Sua tarefa é analisar os dados e gerar um RESUMO ESTRATÉGICO CONCISO seguindo a estrutura JSON.
-              Foque no que realmente importa: ROI, Custo por Lead e escala.
-              Seja direto e use uma linguagem profissional e executiva.`
-            },
-            {
-              role: "user",
-              content: `${prompt}
-              
-              Dados das campanhas do cliente ${clientData.nome_cliente}:
-              ${dataString}
-              
-              Retorne o resultado EXATAMENTE no seguinte formato JSON (Mantenha as descrições curtas e impactantes):
-              {
-                "resumo_executivo": "Resumo conciso da performance global.",
-                "funil_trafego": [
-                  { "etapa": "Impressões", "valor": 100000, "porcentagem": 100, "cor": "#6366f1" },
-                  { "etapa": "Cliques", "valor": 2000, "porcentagem": 2, "cor": "#8b5cf6" },
-                  { "etapa": "Leads/Conversas", "valor": 150, "porcentagem": 7.5, "cor": "#ec4899" }
-                ],
-                "ranking_campanhas": [
-                  { "nome": "Campanha X", "metrica_principal": "ROAS", "valor": 4.5, "posicao": 1 }
-                ],
-                "melhores_anuncios": [
-                  { "titulo": "Criativo Vídeo A", "performance": "Excelente", "ctr": 2.5, "custo_resultado": 8.5 }
-                ],
-                "diagnostico_detalhado": {
-                  "campanhas": [
-                    {
-                      "nome": "Nome da Campanha",
-                      "investimento": 123.45,
-                      "resultados": "X resultados",
-                      "ctr": 1.5,
-                      "cpm": 12.5,
-                      "frequencia": 1.2,
-                      "custo_resultado": 15.0,
-                      "veredicto": "Texto curto de veredicto",
-                      "status": "ok | warning | critical"
-                    }
-                  ]
-                },
-                "principais_problemas": [
-                  { "titulo": "Título do Problema", "descricao": "Descrição detalhada do impacto e causa." }
-                ],
-                "plano_acao": [
-                  { 
-                    "titulo": "Título da Etapa (ex: IMEDIATO, CURTO PRAZO)", 
-                    "acoes": ["Ação 1", "Ação 2"],
-                    "tags": [{ "label": "PAUSAR", "type": "danger" }, { "label": "MANTER", "type": "success" }]
-                  }
-                ],
-                "health_score": [
-                  { "label": "CTR Geral", "atual": "1.5%", "meta": "≥ 2.0%", "porcentagem": 75, "status": "warning" },
-                  { "label": "Custo por Resultado", "atual": "R$ 15,00", "meta": "≤ R$ 10,00", "porcentagem": 60, "status": "danger" }
-                ],
-                "alertas": [
-                  { "tipo": "red | orange | green | purple", "titulo": "Título do Alerta", "descricao": "Texto do alerta" }
-                ]
-              }`
+              "nome": "Nome da Campanha",
+              "investimento": 123.45,
+              "resultados": "X resultados",
+              "ctr": 1.5,
+              "cpm": 12.5,
+              "frequencia": 1.2,
+              "custo_resultado": 15.0,
+              "veredicto": "Texto curto de veredicto",
+              "status": "ok | warning | critical"
             }
-          ],
-          response_format: { type: "json_object" }
-        })
+          ]
+        },
+        "principais_problemas": [
+          { "titulo": "Título do Problema", "descricao": "Descrição detalhada do impacto e causa." }
+        ],
+        "plano_acao": [
+          { 
+            "titulo": "Título da Etapa (ex: IMEDIATO, CURTO PRAZO)", 
+            "acoes": ["Ação 1", "Ação 2"],
+            "tags": [{ "label": "PAUSAR", "type": "danger" }, { "label": "MANTER", "type": "success" }]
+          }
+        ],
+        "health_score": [
+          { "label": "CTR Geral", "atual": "1.5%", "meta": "≥ 2.0%", "porcentagem": 75, "status": "warning" },
+          { "label": "Custo por Resultado", "atual": "R$ 15,00", "meta": "≤ R$ 10,00", "porcentagem": 60, "status": "danger" }
+        ],
+        "alertas": [
+          { "tipo": "red | orange | green | purple", "titulo": "Título do Alerta", "descricao": "Texto do alerta" }
+        ]
+      }`;
+
+      const aiResponse = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: systemInstruction },
+          { role: "user", content: userPrompt }
+        ],
+        response_format: { type: "json_object" }
       });
 
-      if (!openaiResponse.ok) {
-        const err = await openaiResponse.json();
-        throw new Error(err.error?.message || "Erro na chamada à API do OpenAI.");
-      }
-
-      const aiResult = await openaiResponse.json();
-      const content = JSON.parse(aiResult.choices[0].message.content);
+      const content = JSON.parse(aiResponse.choices[0].message.content || "{}");
       
       setAnalysis(content);
       setActiveTab('analise'); // Go to analysis tab after generation
@@ -502,12 +518,12 @@ export default function AiInsights() {
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-indigo-200 dark:border-indigo-900/50 shadow-sm animate-in slide-in-from-top duration-300">
           <div className="flex items-center gap-3 mb-4">
             <Key className="w-5 h-5 text-indigo-600" />
-            <h3 className="font-bold text-slate-900 dark:text-white">Token da API (OpenAI / ChatGPT)</h3>
+            <h3 className="font-bold text-slate-900 dark:text-white">Chave da API (OpenAI)</h3>
           </div>
           <div className="flex gap-4">
             <input 
               type="password"
-              placeholder="sk-..."
+              placeholder="Digite sua chave da API da OpenAI..."
               className="flex-1 px-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
@@ -887,17 +903,99 @@ export default function AiInsights() {
           {/* TAB: Análise Estratégica */}
           {activeTab === 'analise' && (
             <div className="space-y-8">
-              {/* Resumo Executivo */}
+              {/* 1. Resumo Executivo */}
               <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
                 <div className="flex items-center gap-3 mb-6">
                   <div className="p-2 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl">
                     <Sparkles className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
                   </div>
-                  <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight">Resumo Executivo</h3>
+                  <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight">1. Resumo Executivo</h3>
                 </div>
                 <p className="text-lg text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
                   {analysis.resumo_executivo}
                 </p>
+              </div>
+
+              {/* 2. Saúde das Métricas */}
+              <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-2 bg-emerald-50 dark:bg-emerald-900/30 rounded-xl">
+                    <Activity className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight">2. Saúde das Métricas</h3>
+                </div>
+                <p className="text-lg text-slate-600 dark:text-slate-300 leading-relaxed font-medium whitespace-pre-wrap">
+                  {analysis.saude_metricas}
+                </p>
+              </div>
+
+              {/* 3. Pontos Fortes */}
+              <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-2 bg-amber-50 dark:bg-amber-900/30 rounded-xl">
+                    <Award className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight">3. Pontos Fortes</h3>
+                </div>
+                <p className="text-lg text-slate-600 dark:text-slate-300 leading-relaxed font-medium whitespace-pre-wrap">
+                  {analysis.pontos_fortes}
+                </p>
+              </div>
+
+              {/* 4. Gargalos e Fugas de Verba */}
+              <div className="bg-white dark:bg-slate-900 p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-2 bg-red-50 dark:bg-red-900/30 rounded-xl">
+                    <ShieldAlert className="w-6 h-6 text-red-600 dark:text-red-400" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight">4. Gargalos e Fugas de Verba</h3>
+                </div>
+                <p className="text-lg text-slate-600 dark:text-slate-300 leading-relaxed font-medium whitespace-pre-wrap">
+                  {analysis.gargalos_fugas}
+                </p>
+              </div>
+
+              {/* 5. Plano de Ação Prático */}
+              <div className="bg-indigo-600 p-8 rounded-3xl shadow-xl shadow-indigo-500/20">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-2 bg-white/20 rounded-xl">
+                    <Zap className="w-6 h-6 text-white" />
+                  </div>
+                  <h3 className="text-xl font-black text-white uppercase tracking-tight">5. Plano de Ação Prático</h3>
+                </div>
+                <p className="text-lg text-white/90 leading-relaxed font-medium whitespace-pre-wrap mb-8">
+                  {analysis.plano_acao_gerencial}
+                </p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {analysis.plano_acao.map((plano, i) => (
+                    <div key={i} className="bg-white/10 backdrop-blur-md p-6 rounded-2xl border border-white/20">
+                      <div className="flex justify-between items-start mb-4">
+                        <h4 className="font-black text-white uppercase tracking-tight">{plano.titulo}</h4>
+                        <div className="flex gap-1">
+                          {plano.tags.map((tag, j) => (
+                            <span key={j} className={cn(
+                              "px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest",
+                              tag.type === 'danger' && "bg-red-500 text-white",
+                              tag.type === 'success' && "bg-emerald-500 text-white",
+                              tag.type === 'info' && "bg-blue-500 text-white"
+                            )}>
+                              {tag.label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <ul className="space-y-2">
+                        {plano.acoes.map((acao, j) => (
+                          <li key={j} className="flex items-center gap-2 text-xs text-indigo-100 font-medium">
+                            <ArrowRight className="w-3 h-3 text-indigo-300" />
+                            {acao}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* Funil de Tráfego e Rankings */}
