@@ -89,13 +89,14 @@ class MetaAdsService {
   }
 
   static generateCacheKey(adAccountId: string, level: string, since: string, until: string, params: any): string {
+    const CACHE_VERSION = "v3_fix_conversation_started_7d";
     const cleanParams = { ...params };
     delete cleanParams.access_token;
     delete cleanParams.time_range;
     delete cleanParams.date_preset;
     
     const paramStr = JSON.stringify(cleanParams);
-    const hash = crypto.createHash('md5').update(`${adAccountId}_${level}_${since}_${until}_${paramStr}`).digest('hex');
+    const hash = crypto.createHash('md5').update(`${CACHE_VERSION}_${adAccountId}_${level}_${since}_${until}_${paramStr}`).digest('hex');
     return hash;
   }
 
@@ -516,6 +517,49 @@ async function startServer() {
         console.warn(`[MetaAds] Falha ao buscar metadados das campanhas:`, metaError.message);
       }
 
+      const normalizeActions = (actionsInput: any): any[] => {
+        if (!actionsInput) return [];
+        
+        let actions: any[] = [];
+        if (typeof actionsInput === 'string') {
+          try {
+            actionsInput = JSON.parse(actionsInput);
+          } catch (e) {
+            return [];
+          }
+        }
+
+        if (Array.isArray(actionsInput)) {
+          actions = actionsInput;
+        } else if (typeof actionsInput === 'object') {
+          if (actionsInput.data && Array.isArray(actionsInput.data)) {
+            actions = actionsInput.data;
+          } else if (actionsInput.action_type && actionsInput.value) {
+            actions = [actionsInput];
+          } else {
+            actions = Object.entries(actionsInput).map(([key, val]) => ({
+              action_type: key,
+              value: val
+            }));
+          }
+        }
+        return Array.isArray(actions) ? actions : [];
+      };
+
+      const getMessagingConversationsStarted = (actionsInput: any): number => {
+        const actions = normalizeActions(actionsInput);
+        return actions.reduce((acc: number, a: any) => {
+          if (!a || typeof a !== 'object') return acc;
+          const actionType = String(a.action_type || '').toLowerCase();
+          // Match any that starts with the prefix
+          if (actionType.startsWith("onsite_conversion.messaging_conversation_started")) {
+            const val = parseFloat(String(a.value || '0').replace(',', '.'));
+            return acc + (isNaN(val) ? 0 : val);
+          }
+          return acc;
+        }, 0);
+      };
+
       const debugInfo: any = isDebug ? {
         audit_logs: [
           { event: 'collection_start', since: finalSince, until: finalUntil, accountId },
@@ -542,11 +586,13 @@ async function startServer() {
       // Sample action types for debugging (safe)
       if (isDebug && rawCampaignData.length > 0) {
         const sampleActions = new Set<string>();
-        rawCampaignData.slice(0, 10).forEach(item => {
-          const actions = Array.isArray(item.actions) ? item.actions : [];
-          actions.forEach((a: any) => sampleActions.add(a.action_type));
+        rawCampaignData.slice(0, 30).forEach(item => {
+          const actions = normalizeActions(item.actions);
+          actions.forEach((a: any) => {
+            if (a.action_type) sampleActions.add(a.action_type);
+          });
         });
-        debugInfo.sample_action_types = Array.from(sampleActions);
+        debugInfo.sample_action_types = Array.from(sampleActions).slice(0, 30);
       }
 
       // --- PROCESSAMENTO DE DADOS ---
@@ -579,38 +625,7 @@ async function startServer() {
       ];
 
       const extractActions = (actionsInput: any, types: string[]) => {
-        let actions: any[] = [];
-        
-        // Robust normalization of actions
-        if (!actionsInput) return 0;
-
-        if (typeof actionsInput === 'string') {
-          try {
-            actionsInput = JSON.parse(actionsInput);
-          } catch (e) {
-            return 0;
-          }
-        }
-
-        if (Array.isArray(actionsInput)) {
-          actions = actionsInput;
-        } else if (typeof actionsInput === 'object') {
-          // Handle case where actions is a map of { action_type: value }
-          if (actionsInput.action_type && actionsInput.value) {
-            actions = [actionsInput];
-          } else if (actionsInput.data && Array.isArray(actionsInput.data)) {
-            actions = actionsInput.data;
-          } else {
-            // Convert { "type": 10 } to [{ action_type: "type", value: 10 }]
-            actions = Object.entries(actionsInput).map(([key, val]) => ({
-              action_type: key,
-              value: val
-            }));
-          }
-        }
-
-        if (!Array.isArray(actions)) return 0;
-
+        const actions = normalizeActions(actionsInput);
         return actions.reduce((acc: number, a: any) => {
           if (!a || typeof a !== 'object') return acc;
           const actionType = String(a.action_type || '').toLowerCase();
@@ -624,42 +639,7 @@ async function startServer() {
       };
 
       const getWaConversations = (actionsInput: any) => {
-        if (!actionsInput) return 0;
-
-        // 1. Try explicit types first (order of priority)
-        for (const type of waResultActionTypes) {
-          const val = extractActions(actionsInput, [type]);
-          if (val > 0) return val;
-        }
-        
-        // 2. Fallback: Look for ANY action that contains "messaging" AND ("started" OR "conversation")
-        // This is a safety net for accounts using non-standard or newer action types.
-        let actions: any[] = [];
-        if (Array.isArray(actionsInput)) {
-          actions = actionsInput;
-        } else if (typeof actionsInput === 'object') {
-          actions = Object.entries(actionsInput).map(([key, val]) => ({
-            action_type: key,
-            value: val
-          }));
-        }
-
-        const messagingActions = actions.filter(a => {
-          const t = String(a.action_type || '').toLowerCase();
-          return t.includes('messaging') && (t.includes('started') || t.includes('conversation'));
-        });
-
-        if (messagingActions.length > 0) {
-          // Sort by value descending to pick the most significant metric if multiple exist
-          const bestMatch = messagingActions.sort((a, b) => 
-            parseFloat(String(b.value || 0)) - parseFloat(String(a.value || 0))
-          )[0];
-          
-          const val = parseFloat(String(bestMatch.value).replace(',', '.') || '0');
-          return isNaN(val) ? 0 : val;
-        }
-        
-        return 0;
+        return getMessagingConversationsStarted(actionsInput);
       };
 
       const metaMap = new Map();
