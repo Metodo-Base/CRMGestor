@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // For now, as requested, we allow public access to dashboards via ID
+    // but we should still validate data on write.
+    // In a real app, we'd have auth for admin and maybe token-based for public.
+    
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         request.auth.token.email == "natanvileladesouza@gmail.com");
+    }
+
+    match /clientes/{clienteId} {
+      // Allow public read for dashboard purposes
+      allow read: if true;
+      // Allow write for admin (simulated for now)
+      allow write: if true;
+    }
+
+    match /dados_campanhas/{dadoId} {
+      // Allow public read for dashboard purposes
+      allow read: if true;
+      // Allow write for admin (simulated for now)
+      allow write: if true;
+    }
+
+    match /api_keys/{keyId} {
+      allow read, write: if true;
+    }
+
+    match /config_ia/{configId} {
+      allow read, write: if true;
+    }
+
+    match /logs_busca_ia/{logId} {
+      allow read, write: if true;
+    }
+
+    match /meta_ads_accounts/{accountId} {
+      allow read, write: if true;
+    }
+
+    match /google_ads_accounts/{accountId} {
+      allow read, write: if true;
+    }
+
+    match /tasks/{taskId} {
+      allow read, write: if true;
+    }
+
+    match /notes/{noteId} {
+      allow read, write: if true;
+    }
+  }
+}

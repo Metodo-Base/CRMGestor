@@ -1,0 +1,172 @@
+{
+  "entities": {
+    "Cliente": {
+      "title": "Cliente",
+      "description": "Dados do cliente do gestor de tráfego",
+      "type": "object",
+      "properties": {
+        "nome_cliente": { "type": "string", "description": "Nome do cliente" },
+        "segmento": { "type": "string", "description": "Segmento de atuação" },
+        "logo_url": { "type": "string", "description": "URL da logo do cliente" },
+        "email_contato": { "type": "string", "description": "E-mail de contato" },
+        "whatsapp_contato": { "type": "string", "description": "WhatsApp de contato" },
+        "meta_ads_conectado": { "type": "boolean", "description": "Status de conexão Meta Ads" },
+        "google_ads_conectado": { "type": "boolean", "description": "Status de conexão Google Ads" },
+        "meta_ads_account_id": { "type": "string", "description": "ID da conta Meta Ads (referência à coleção meta_ads_accounts)" },
+        "google_ads_refresh_token": { "type": "string", "description": "Refresh token Google Ads (seguro)" },
+        "google_ads_customer_id": { "type": "string", "description": "ID do cliente Google Ads" },
+        "ultima_sincronizacao": { "type": "string", "format": "date-time", "description": "Data da última sincronização" },
+        "dashboard_url": { "type": "string", "description": "URL única do dashboard" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nome_cliente", "email_contato"]
+    },
+    "MetaAdsAccount": {
+      "title": "Meta Ads Account",
+      "description": "Conta de anúncios da Meta conectada centralizadamente",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Nome da conta de anúncios" },
+        "access_token": { "type": "string", "description": "Token de acesso de longa duração" },
+        "status": { "type": "string", "enum": ["connected", "expired"] },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ApiKey": {
+      "title": "API Key",
+      "description": "Chaves de API para acesso externo",
+      "type": "object",
+      "properties": {
+        "key_hash": { "type": "string" },
+        "nome": { "type": "string" },
+        "status": { "type": "string", "enum": ["ativa", "revogada"] },
+        "ultimo_uso": { "type": "string", "format": "date-time" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ConfigIA": {
+      "title": "Configuração IA",
+      "description": "Configurações do provedor de IA",
+      "type": "object",
+      "properties": {
+        "provedor": { "type": "string", "enum": ["openai", "google_gemini"] },
+        "modelo": { "type": "string" },
+        "api_key_ia": { "type": "string" },
+        "limite_tokens": { "type": "number" },
+        "modo_resposta_padrao": { "type": "string", "enum": ["enxuto", "detalhado"] },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "LogBuscaIA": {
+      "title": "Log Busca IA",
+      "description": "Registros de buscas realizadas com IA",
+      "type": "object",
+      "properties": {
+        "data_hora": { "type": "string", "format": "date-time" },
+        "query_original": { "type": "string" },
+        "provedor": { "type": "string" },
+        "modelo": { "type": "string" },
+        "filtros_interpretados": { "type": "object" },
+        "quantidade_resultados": { "type": "number" },
+        "status": { "type": "string" },
+        "tempo_resposta_ms": { "type": "number" },
+        "tokens_usados": { "type": "number" },
+        "custo_estimado_usd": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "DadosCampanha": {
+      "title": "Dados de Campanha",
+      "description": "Métricas de performance de campanhas",
+      "type": "object",
+      "properties": {
+        "cliente_id": { "type": "string", "description": "ID do cliente" },
+        "data": { "type": "string", "format": "date", "description": "Data da métrica" },
+        "plataforma": { "type": "string", "enum": ["meta_ads", "google_ads"], "description": "Plataforma de anúncios" },
+        "campanha_id_externo": { "type": "string", "description": "ID da campanha na plataforma" },
+        "campanha_nome": { "type": "string", "description": "Nome da campanha" },
+        "investimento": { "type": "number" },
+        "impressoes": { "type": "number" },
+        "cliques": { "type": "number" },
+        "cpc": { "type": "number" },
+        "ctr": { "type": "number" },
+        "conversoes": { "type": "number" },
+        "cpa": { "type": "number" },
+        "roas": { "type": "number" },
+        "alcance": { "type": "number", "description": "Apenas Meta Ads" },
+        "frequencia": { "type": "number", "description": "Apenas Meta Ads" },
+        "posicao_media": { "type": "number", "description": "Apenas Google Ads" },
+        "indice_qualidade": { "type": "number", "description": "Apenas Google Ads" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["cliente_id", "data", "plataforma", "campanha_nome"]
+    },
+    "Task": {
+      "title": "Tarefa",
+      "description": "Tarefas ou observações relacionadas a um cliente",
+      "type": "object",
+      "properties": {
+        "cliente_id": { "type": "string", "description": "ID do cliente relacionado" },
+        "title": { "type": "string", "description": "Título da tarefa" },
+        "description": { "type": "string", "description": "Observações ou descrição detalhada" },
+        "date": { "type": "string", "format": "date", "description": "Data de execução ou registro" },
+        "status": { "type": "string", "enum": ["pending", "in_progress", "completed"], "description": "Status da tarefa" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["cliente_id", "title", "date"]
+    },
+    "Note": {
+      "title": "Anotação",
+      "description": "Anotações e observações gerais ou sobre clientes",
+      "type": "object",
+      "properties": {
+        "cliente_id": { "type": "string", "description": "ID do cliente relacionado (opcional)" },
+        "title": { "type": "string", "description": "Título da anotação" },
+        "content": { "type": "string", "description": "Conteúdo da anotação" },
+        "date": { "type": "string", "format": "date", "description": "Data do registro" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "content", "date"]
+    }
+  },
+  "firestore": {
+    "/clientes/{clienteId}": {
+      "schema": "Cliente",
+      "description": "Coleção de clientes"
+    },
+    "/dados_campanhas/{dadoId}": {
+      "schema": "DadosCampanha",
+      "description": "Coleção de métricas de campanhas"
+    },
+    "/api_keys/{keyId}": {
+      "schema": "ApiKey",
+      "description": "Chaves de API"
+    },
+    "/config_ia/{configId}": {
+      "schema": "ConfigIA",
+      "description": "Configurações de IA"
+    },
+    "/logs_busca_ia/{logId}": {
+      "schema": "LogBuscaIA",
+      "description": "Logs de busca IA"
+    },
+    "/meta_ads_accounts/{accountId}": {
+      "schema": "MetaAdsAccount",
+      "description": "Contas de anúncios Meta centralizadas"
+    },
+    "/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Coleção de tarefas e observações"
+    },
+    "/notes/{noteId}": {
+      "schema": "Note",
+      "description": "Coleção de anotações gerais"
+    }
+  }
+}
