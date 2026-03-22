@@ -71,6 +71,134 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
     setDataFim(localDataFim);
   };
 
+  const debugPanel = useMemo(() => {
+    if (!debugMode || !debugInfo) return null;
+
+    return (
+      <div className="mb-8 p-4 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/50 rounded-2xl">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold text-amber-800 dark:text-amber-400 flex items-center gap-2">
+            <Bug className="w-4 h-4" />
+            Diagnóstico Meta Ads API
+          </h3>
+          <button 
+            onClick={() => setDebugInfo(null)}
+            className="text-amber-600 hover:text-amber-800 dark:text-amber-500 dark:hover:text-amber-300"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Action Types Section */}
+          <div className="lg:col-span-2 space-y-4">
+            <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-amber-100 dark:border-amber-800/30">
+              <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-wider">Action Types Encontrados:</p>
+              
+              <div className="space-y-4">
+                {/* Summary Level */}
+                <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Account Summary (Valores Totais):</p>
+                  <div className="flex flex-wrap gap-1">
+                    {debugInfo.samples?.summary?.[0]?.actions?.length > 0 ? (
+                      debugInfo.samples.summary[0].actions.map((a: any) => (
+                        <span key={`sum_val_${a.action_type}`} className="px-2 py-0.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded text-[10px] font-mono">
+                          {a.action_type}: <span className="font-bold">{a.value}</span>
+                        </span>
+                      ))
+                    ) : <span className="text-[10px] text-slate-400 italic">Nenhum</span>}
+                  </div>
+                </div>
+
+                {/* Campaign Level */}
+                <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Campaign Level:</p>
+                  <div className="flex flex-wrap gap-1">
+                    {debugInfo.action_types_unique?.campaign?.length > 0 ? (
+                      debugInfo.action_types_unique.campaign.map((type: string) => (
+                        <span key={`camp_${type}`} className="px-2 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 rounded text-[10px] font-mono">
+                          {type}
+                        </span>
+                      ))
+                    ) : <span className="text-[10px] text-slate-400 italic">Nenhum</span>}
+                  </div>
+                </div>
+
+                {/* Ad Level */}
+                <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Ad Level:</p>
+                  <div className="flex flex-wrap gap-1">
+                    {debugInfo.action_types_unique?.ad?.length > 0 ? (
+                      debugInfo.action_types_unique.ad.map((type: string) => (
+                        <span key={`ad_${type}`} className="px-2 py-0.5 bg-rose-50 dark:bg-rose-900/20 text-rose-700 dark:text-rose-300 rounded text-[10px] font-mono">
+                          {type}
+                        </span>
+                      ))
+                    ) : <span className="text-[10px] text-slate-400 italic">Nenhum</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Campaign Results Preview Section */}
+            {debugInfo.campaign_results_preview && (
+              <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-amber-100 dark:border-amber-800/30">
+                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-wider">Cálculo de Resultados por Campanha:</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[10px]">
+                    <thead>
+                      <tr className="border-b border-slate-100 dark:border-slate-800">
+                        <th className="text-left py-2 font-bold text-slate-400 uppercase">Campanha</th>
+                        <th className="text-left py-2 font-bold text-slate-400 uppercase">Destino</th>
+                        <th className="text-left py-2 font-bold text-slate-400 uppercase">Rótulo</th>
+                        <th className="text-right py-2 font-bold text-slate-400 uppercase">Valor</th>
+                        <th className="text-left py-2 font-bold text-slate-400 uppercase">Fonte/Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {debugInfo.campaign_results_preview.map((item: any, i: number) => (
+                        <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50 last:border-0">
+                          <td className="py-2 text-slate-700 dark:text-slate-300 font-medium">{item.campaign_name}</td>
+                          <td className="py-2">
+                            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${
+                              item.destination === 'instagram' ? 'bg-pink-100 text-pink-700' :
+                              item.destination === 'whatsapp' ? 'bg-green-100 text-green-700' :
+                              'bg-slate-100 text-slate-600'
+                            }`}>
+                              {item.destination}
+                            </span>
+                          </td>
+                          <td className="py-2 text-slate-500 italic">{item.results_label}</td>
+                          <td className="py-2 text-right font-bold text-indigo-600">{item.results_value}</td>
+                          <td className="py-2 text-slate-400 font-mono text-[9px]">{item.source_action}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {/* Params Section */}
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-amber-100 dark:border-amber-800/30 overflow-hidden">
+            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-wider">Parâmetros da Requisição:</p>
+            <div className="space-y-4">
+              {Object.entries(debugInfo.request_params_used || {}).map(([key, val]: [string, any]) => (
+                <div key={key}>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">{key}:</p>
+                  <pre className="text-[9px] bg-slate-50 dark:bg-slate-950 p-2 rounded overflow-x-auto text-slate-600 dark:text-slate-400">
+                    {JSON.stringify(val, null, 2)}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }, [debugMode, debugInfo]);
+
   useEffect(() => {
     if (!clienteId) return;
 
@@ -637,6 +765,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
     <div className="flex flex-col items-center justify-center p-20 space-y-4">
       <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
       <p className="text-slate-500 dark:text-slate-400 font-medium">Carregando dados reais da Meta Ads...</p>
+      {debugPanel}
     </div>
   );
 
@@ -665,10 +794,13 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
           setFiltroPlataforma={setLocalFiltroPlataforma}
           filtroCampanha={localFiltroCampanha}
           setFiltroCampanha={setLocalFiltroCampanha}
+          debugMode={debugMode}
+          setDebugMode={setDebugMode}
           onApplyFilters={handleApplyFilters}
           showComparison={showComparison}
           setShowComparison={setShowComparison}
         />
+        {debugPanel}
         <div className="flex flex-col items-center justify-center p-20 text-center space-y-4 bg-white dark:bg-slate-900 rounded-2xl border border-rose-200 dark:border-rose-900/30 shadow-sm">
           <div className="p-4 bg-rose-50 dark:bg-rose-900/30 rounded-full">
             <Target className="w-8 h-8 text-rose-500" />
@@ -706,10 +838,13 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
           setFiltroPlataforma={setLocalFiltroPlataforma}
           filtroCampanha={localFiltroCampanha}
           setFiltroCampanha={setLocalFiltroCampanha}
+          debugMode={debugMode}
+          setDebugMode={setDebugMode}
           onApplyFilters={handleApplyFilters}
           showComparison={showComparison}
           setShowComparison={setShowComparison}
         />
+        {debugPanel}
         <div className="flex flex-col items-center justify-center p-20 text-center space-y-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="p-4 bg-indigo-50 dark:bg-indigo-900/30 rounded-full">
             <BarChart3 className="w-8 h-8 text-indigo-500" />
@@ -755,156 +890,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
         setShowComparison={setShowComparison}
       />
 
-      {debugMode && debugInfo && (
-        <div className="mb-8 p-4 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/50 rounded-2xl">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-amber-800 dark:text-amber-400 flex items-center gap-2">
-              <Bug className="w-4 h-4" />
-              Diagnóstico Meta Ads API
-            </h3>
-            <button 
-              onClick={() => setDebugInfo(null)}
-              className="text-amber-600 hover:text-amber-800 dark:text-amber-500 dark:hover:text-amber-300"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* Action Types Section */}
-            <div className="lg:col-span-2 space-y-4">
-              <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-amber-100 dark:border-amber-800/30">
-                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-wider">Action Types Encontrados:</p>
-                
-                <div className="space-y-4">
-                  {/* Summary Level */}
-                  <div>
-                    <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Account Summary (Valores Totais):</p>
-                    <div className="flex flex-wrap gap-1">
-                      {debugInfo.samples?.summary?.[0]?.actions?.length > 0 ? (
-                        debugInfo.samples.summary[0].actions.map((a: any) => (
-                          <span key={`sum_val_${a.action_type}`} className="px-2 py-0.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded text-[10px] font-mono">
-                            {a.action_type}: <span className="font-bold">{a.value}</span>
-                          </span>
-                        ))
-                      ) : <span className="text-[10px] text-slate-400 italic">Nenhum</span>}
-                    </div>
-                  </div>
-
-                  {/* Campaign Level */}
-                  <div>
-                    <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Campaign Level:</p>
-                    <div className="flex flex-wrap gap-1">
-                      {debugInfo.action_types_unique?.campaign?.length > 0 ? (
-                        debugInfo.action_types_unique.campaign.map((type: string) => (
-                          <span key={`camp_${type}`} className="px-2 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 rounded text-[10px] font-mono">
-                            {type}
-                          </span>
-                        ))
-                      ) : <span className="text-[10px] text-slate-400 italic">Nenhum</span>}
-                    </div>
-                  </div>
-
-                  {/* Ad Level */}
-                  <div>
-                    <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">Ad Level:</p>
-                    <div className="flex flex-wrap gap-1">
-                      {debugInfo.action_types_unique?.ad?.length > 0 ? (
-                        debugInfo.action_types_unique.ad.map((type: string) => (
-                          <span key={`ad_${type}`} className="px-2 py-0.5 bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 rounded text-[10px] font-mono">
-                            {type}
-                          </span>
-                        ))
-                      ) : <span className="text-[10px] text-slate-400 italic">Nenhum</span>}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Samples Section */}
-              <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-amber-100 dark:border-amber-800/30">
-                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-wider">Amostras de Dados (Campaign Level):</p>
-                <div className="space-y-3">
-                  {debugInfo.samples?.campaign?.map((sample: any, i: number) => (
-                    <div key={i} className="text-[10px] border-b border-slate-100 dark:border-slate-800 pb-2 last:border-0">
-                      <div className="flex justify-between font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        <span>{sample.campaign_name}</span>
-                        <div className="flex gap-2 text-[9px]">
-                          <span className="px-1 bg-slate-100 dark:bg-slate-800 rounded">{sample.objective}</span>
-                          <span className="px-1 bg-blue-50 dark:bg-blue-900/20 text-blue-600 rounded">{sample.optimization_goal}</span>
-                          <span className="text-slate-400">{sample.date_start}</span>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {sample.actions?.map((a: any, j: number) => (
-                          <span key={j} className="text-slate-500">
-                            {a.action_type}: <span className="text-indigo-500 font-bold">{a.value}</span>
-                            {j < sample.actions.length - 1 ? " | " : ""}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Campaign Results Preview Section */}
-              {debugInfo.campaign_results_preview && (
-                <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-amber-100 dark:border-amber-800/30">
-                  <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-wider">Cálculo de Resultados por Campanha:</p>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-[10px]">
-                      <thead>
-                        <tr className="border-b border-slate-100 dark:border-slate-800">
-                          <th className="text-left py-2 font-bold text-slate-400 uppercase">Campanha</th>
-                          <th className="text-left py-2 font-bold text-slate-400 uppercase">Destino</th>
-                          <th className="text-left py-2 font-bold text-slate-400 uppercase">Rótulo</th>
-                          <th className="text-right py-2 font-bold text-slate-400 uppercase">Valor</th>
-                          <th className="text-left py-2 font-bold text-slate-400 uppercase">Fonte/Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {debugInfo.campaign_results_preview.map((item: any, i: number) => (
-                          <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50 last:border-0">
-                            <td className="py-2 text-slate-700 dark:text-slate-300 font-medium">{item.campaign_name}</td>
-                            <td className="py-2">
-                              <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${
-                                item.destination === 'instagram' ? 'bg-pink-100 text-pink-700' :
-                                item.destination === 'whatsapp' ? 'bg-green-100 text-green-700' :
-                                'bg-slate-100 text-slate-600'
-                              }`}>
-                                {item.destination}
-                              </span>
-                            </td>
-                            <td className="py-2 text-slate-500 italic">{item.results_label}</td>
-                            <td className="py-2 text-right font-bold text-indigo-600">{item.results_value}</td>
-                            <td className="py-2 text-slate-400 font-mono text-[9px]">{item.source_action}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-            
-            {/* Params Section */}
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-amber-100 dark:border-amber-800/30 overflow-hidden">
-              <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-3 uppercase tracking-wider">Parâmetros da Requisição:</p>
-              <div className="space-y-4">
-                {Object.entries(debugInfo.request_params_used || {}).map(([key, val]: [string, any]) => (
-                  <div key={key}>
-                    <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">{key}:</p>
-                    <pre className="text-[9px] bg-slate-50 dark:bg-slate-950 p-2 rounded overflow-x-auto text-slate-600 dark:text-slate-400">
-                      {JSON.stringify(val, null, 2)}
-                    </pre>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {debugPanel}
 
       {/* Overview Cards */}
       <div className="space-y-6">
