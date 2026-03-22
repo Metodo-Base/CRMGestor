@@ -578,9 +578,10 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
       const ctr = totals.impressoes > 0 ? (totals.cliques / totals.impressoes) * 100 : 0;
       const cpa = totals.conversoes > 0 ? totals.investimento / totals.conversoes : 0;
       const cpl = totals.conversoes > 0 ? totals.investimento / totals.conversoes : 0;
+      const cpwa = totals.whatsapp_conversations > 0 ? totals.investimento / totals.whatsapp_conversations : 0;
       const cpm = totals.impressoes > 0 ? (totals.investimento / totals.impressoes) * 1000 : 0;
       const frequencia = totals.alcance > 0 ? totals.impressoes / totals.alcance : 0;
-      return { ...totals, cpc, ctr, cpa, cpl, cpm, frequencia };
+      return { ...totals, cpc, ctr, cpa, cpl, cpwa, cpm, frequencia };
     };
 
     const currentMetrics = calculateMetrics(currentTotals);
@@ -595,6 +596,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
       investimento: calculateVariation(currentMetrics.investimento, previousMetrics.investimento),
       conversoes: calculateVariation(currentMetrics.conversoes, previousMetrics.conversoes),
       cpl: calculateVariation(currentMetrics.cpl, previousMetrics.cpl),
+      cpwa: calculateVariation(currentMetrics.cpwa, previousMetrics.cpwa),
       cliques: calculateVariation(currentMetrics.cliques, previousMetrics.cliques),
       impressoes: calculateVariation(currentMetrics.impressoes, previousMetrics.impressoes),
       whatsapp_conversations: calculateVariation(currentMetrics.whatsapp_conversations, previousMetrics.whatsapp_conversations),
@@ -632,7 +634,9 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
         conversoes: 0,
         cliques: 0,
         impressoes: 0,
-        cpl: 0
+        whatsapp_conversations: 0,
+        cpl: 0,
+        cpwa: 0
       };
     });
 
@@ -642,13 +646,15 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
         groups[d.data].conversoes += d.conversoes;
         groups[d.data].cliques += d.cliques;
         groups[d.data].impressoes += d.impressoes;
+        groups[d.data].whatsapp_conversations += (d.whatsapp_conversations || 0);
       }
     });
     
     return Object.values(groups).map((g: any) => ({
       ...g,
       ctr: g.impressoes > 0 ? (g.cliques / g.impressoes) * 100 : 0,
-      cpl: g.conversoes > 0 ? g.investimento / g.conversoes : 0
+      cpl: g.conversoes > 0 ? g.investimento / g.conversoes : 0,
+      cpwa: g.whatsapp_conversations > 0 ? g.investimento / g.whatsapp_conversations : 0
     }));
   }, [filteredData, periodo, dataInicio, dataFim]);
 
@@ -665,6 +671,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
         resultados: c.resultados,
         whatsapp_conversations: c.wa_conversations || c.whatsapp_conversations || 0,
         cpl: c.conversoes > 0 ? c.investimento / c.conversoes : 0,
+        cpwa: (c.wa_conversations || c.whatsapp_conversations || 0) > 0 ? c.investimento / (c.wa_conversations || c.whatsapp_conversations) : 0,
         cpm: c.impressoes > 0 ? (c.investimento / c.impressoes) * 1000 : 0,
         ctr: c.impressoes > 0 ? (c.cliques / c.impressoes) * 100 : 0,
       })).sort((a, b) => b.investimento - a.investimento);
@@ -695,6 +702,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
     return Object.values(report).map(r => ({
       ...r,
       cpl: r.conversoes > 0 ? r.investimento / r.conversoes : 0,
+      cpwa: r.whatsapp_conversations > 0 ? r.investimento / r.whatsapp_conversations : 0,
       cpm: r.impressoes > 0 ? (r.investimento / r.impressoes) * 1000 : 0,
       ctr: r.impressoes > 0 ? (r.cliques / r.impressoes) * 100 : 0,
     })).sort((a, b) => b.investimento - a.investimento);
@@ -715,6 +723,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
         resultados: r.resultados,
         whatsapp_conversations: r.wa_conversations || r.whatsapp_conversations || 0,
         cpl: r.conversoes > 0 ? r.investimento / r.conversoes : 0,
+        cpwa: (r.wa_conversations || r.whatsapp_conversations || 0) > 0 ? r.investimento / (r.wa_conversations || r.whatsapp_conversations) : 0,
         cpm: r.impressoes > 0 ? (r.investimento / r.impressoes) * 1000 : 0,
         ctr: r.impressoes > 0 ? (r.cliques / r.impressoes) * 100 : 0,
         frequency: r.frequency || (r.reach > 0 ? r.impressoes / r.reach : 1),
@@ -750,6 +759,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
     return Object.values(report).map(r => ({
       ...r,
       cpl: r.conversoes > 0 ? r.investimento / r.conversoes : 0,
+      cpwa: r.whatsapp_conversations > 0 ? r.investimento / r.whatsapp_conversations : 0,
       cpm: r.impressoes > 0 ? (r.investimento / r.impressoes) * 1000 : 0,
       ctr: r.impressoes > 0 ? (r.cliques / r.impressoes) * 100 : 0,
       frequency: r.reach > 0 ? r.impressoes / r.reach : 1,
@@ -919,24 +929,24 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
             legend="Total de vezes que os anúncios foram exibidos"
           />
           <MetricCard 
-            title="Contatos / Conversões" 
-            value={metrics.conversoes} 
+            title="Conversas WA" 
+            value={metrics.whatsapp_conversations} 
             type="number" 
             icon={Target} 
             color="emerald" 
             highlight
-            variation={showComparison ? metrics.variations.conversoes : null}
-            legend="Total de leads gerados"
+            variation={showComparison ? metrics.variations.whatsapp_conversations : null}
+            legend="Total de conversas iniciadas"
           />
           <MetricCard 
-            title="Custo por Contato" 
-            value={metrics.cpl} 
+            title="Custo por Conversas WA" 
+            value={metrics.cpwa} 
             type="currency" 
             icon={Zap} 
             color="rose" 
             highlight
-            variation={showComparison ? metrics.variations.cpl : null}
-            legend="Custo médio por lead"
+            variation={showComparison ? metrics.variations.cpwa : null}
+            legend="Custo médio por conversa WA"
           />
           <MetricCard 
             title="Cliques no Link" 
@@ -949,14 +959,14 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
             legend="Cliques totais nos anúncios"
           />
           <MetricCard 
-            title="Conversas WA" 
-            value={metrics.whatsapp_conversations} 
+            title="Cadastros Efetuados" 
+            value={metrics.conversoes} 
             type="number" 
             icon={Users} 
             color="green" 
             highlight
-            variation={showComparison ? metrics.variations.whatsapp_conversations : null}
-            legend="Conversas iniciadas no WhatsApp"
+            variation={showComparison ? metrics.variations.conversoes : null}
+            legend="Total de cadastros no site"
           />
         </div>
       </div>
@@ -1009,7 +1019,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
                 activeChart === "performance" ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
               )}
             >
-              Investimento x Contatos x Custo/Contato
+              Investimento x Conversas WA x Custo/Conversa
             </button>
             <button 
               onClick={() => setActiveChart("engagement")}
@@ -1065,8 +1075,8 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
               {activeChart === "performance" ? (
                 <>
                   <Area yId="left" type="monotone" dataKey="investimento" name="Investimento (R$)" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorPrimary)" />
-                  <Area yId="right" type="monotone" dataKey="conversoes" name="Contatos" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorSecondary)" />
-                  <Area yId="left" type="monotone" dataKey="cpl" name="Custo/Contato (R$)" stroke="#f43f5e" strokeWidth={2} strokeDasharray="5 5" fill="none" />
+                  <Area yId="right" type="monotone" dataKey="whatsapp_conversations" name="Conversas WA" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorSecondary)" />
+                  <Area yId="left" type="monotone" dataKey="cpwa" name="Custo/Conversa WA (R$)" stroke="#f43f5e" strokeWidth={2} strokeDasharray="5 5" fill="none" />
                 </>
               ) : (
                 <>
@@ -1130,6 +1140,47 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
           />
         )}
       </div>
+
+      {/* Meta Ads Summary Section */}
+      {(filtroPlataforma === "todas" || filtroPlataforma === "meta_ads") && (
+        <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm mt-8">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="p-2 bg-blue-600 rounded-lg text-white">
+              <Facebook className="w-5 h-5" />
+            </div>
+            <h3 className="text-xl font-black text-slate-900 dark:text-white uppercase tracking-tight">Resumo Meta Ads</h3>
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+              <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">Valor Investido</p>
+              <p className="text-2xl font-black text-slate-900 dark:text-white">
+                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                  filteredData.filter(d => d.plataforma === 'meta_ads').reduce((acc, curr) => acc + curr.investimento, 0)
+                )}
+              </p>
+            </div>
+            <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+              <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">Conversas WA</p>
+              <p className="text-2xl font-black text-slate-900 dark:text-white">
+                {filteredData.filter(d => d.plataforma === 'meta_ads').reduce((acc, curr) => acc + (curr.whatsapp_conversations || 0), 0).toLocaleString('pt-BR')}
+              </p>
+            </div>
+            <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+              <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">Cliques</p>
+              <p className="text-2xl font-black text-slate-900 dark:text-white">
+                {filteredData.filter(d => d.plataforma === 'meta_ads').reduce((acc, curr) => acc + curr.cliques, 0).toLocaleString('pt-BR')}
+              </p>
+            </div>
+            <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+              <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">Alcance</p>
+              <p className="text-2xl font-black text-slate-900 dark:text-white">
+                {filteredData.filter(d => d.plataforma === 'meta_ads').reduce((acc, curr) => acc + (curr.alcance || 0), 0).toLocaleString('pt-BR')}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1516,9 +1567,9 @@ function RankingTable({ title, subtitle, data, type, onItemClick, onHeaderIconCl
                 {type === 'campaign' ? 'Campanha' : 'Anúncio'}
               </th>
               <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Investimento</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Contatos</th>
+              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Cadastros</th>
               <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Conversas WA</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Custo/Contato</th>
+              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Custo/Conversa WA</th>
               <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">CTR</th>
               {type === 'ad' && (
                 <>
@@ -1563,7 +1614,7 @@ function RankingTable({ title, subtitle, data, type, onItemClick, onHeaderIconCl
                   </td>
                   <td className="px-6 py-4 text-right">
                     <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.cpl)}
+                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.cpwa)}
                     </p>
                   </td>
                   <td className="px-6 py-4 text-right">
@@ -1606,6 +1657,7 @@ function PlatformSection({ title, icon: Icon, color, data }: any) {
       investimento: acc.investimento + curr.investimento,
       cliques: acc.cliques + curr.cliques,
       conversoes: acc.conversoes + curr.conversoes,
+      whatsapp_conversations: (acc.whatsapp_conversations || 0) + (curr.whatsapp_conversations || 0),
       alcance: (acc.alcance || 0) + (curr.alcance || 0),
       posicao: (acc.posicao || 0) + (curr.posicao_media || 0),
     }), { investimento: 0, cliques: 0, conversoes: 0, alcance: 0, posicao: 0 });
@@ -1642,8 +1694,14 @@ function PlatformSection({ title, icon: Icon, color, data }: any) {
             <p className="text-lg font-bold text-slate-900 dark:text-white">{metrics.cliques.toLocaleString('pt-BR')}</p>
           </div>
           <div className="text-center">
-            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase">Conversões</p>
-            <p className="text-lg font-bold text-slate-900 dark:text-white">{metrics.conversoes.toLocaleString('pt-BR')}</p>
+            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase">
+              {title === 'Meta Ads' ? 'Conversas WA' : 'Conversões'}
+            </p>
+            <p className="text-lg font-bold text-slate-900 dark:text-white">
+              {title === 'Meta Ads' 
+                ? (metrics.whatsapp_conversations || 0).toLocaleString('pt-BR') 
+                : metrics.conversoes.toLocaleString('pt-BR')}
+            </p>
           </div>
           <div className="text-center">
             <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase">
@@ -1675,8 +1733,12 @@ function PlatformSection({ title, icon: Icon, color, data }: any) {
                   </div>
                   <div className="flex gap-2 justify-end">
                     <div className="flex flex-col items-end">
-                      <span className="text-[8px] font-bold text-slate-400 uppercase">Contatos</span>
-                      <p className="text-[10px] font-bold text-slate-700 dark:text-slate-300">{camp.conversoes}</p>
+                      <span className="text-[8px] font-bold text-slate-400 uppercase">
+                        {title === 'Meta Ads' ? 'Conv. WA' : 'Contatos'}
+                      </span>
+                      <p className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
+                        {title === 'Meta Ads' ? (camp.whatsapp_conversations || 0) : camp.conversoes}
+                      </p>
                     </div>
                     <div className="flex flex-col items-end">
                       <span className="text-[8px] font-bold text-slate-400 uppercase">CPM</span>
@@ -1748,13 +1810,13 @@ function DetailsModal({ item, type, onClose }: any) {
                         </p>
                       </div>
                       <div>
-                        <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-bold">Contatos</p>
-                        <p className="text-xs font-bold text-slate-900 dark:text-white">{camp.conversoes}</p>
+                        <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-bold">Conversas WA</p>
+                        <p className="text-xs font-bold text-slate-900 dark:text-white">{(camp.whatsapp_conversations || 0)}</p>
                       </div>
                       <div>
-                        <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-bold">Custo/Contato</p>
+                        <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-bold">Custo/Conversa WA</p>
                         <p className="text-xs font-bold text-rose-500">
-                          {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(camp.cpl)}
+                          {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(camp.cpwa)}
                         </p>
                       </div>
                       <div>
@@ -1777,8 +1839,9 @@ function DetailsModal({ item, type, onClose }: any) {
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
                 <ModalMetric label="Investimento" value={item.investimento} type="currency" icon={DollarSign} color="indigo" />
-                <ModalMetric label="Contatos" value={item.conversoes} type="number" icon={Target} color="emerald" />
-                <ModalMetric label="Custo/Contato" value={item.cpl} type="currency" icon={Zap} color="rose" />
+                <ModalMetric label="Conversas WA" value={item.whatsapp_conversations} type="number" icon={Target} color="emerald" />
+                <ModalMetric label="Custo/Conversa WA" value={item.cpwa} type="currency" icon={Zap} color="rose" />
+                <ModalMetric label="Cadastros" value={item.conversoes} type="number" icon={Users} color="green" />
                 <ModalMetric label="Cliques" value={item.cliques} type="number" icon={MousePointer2} color="amber" />
                 <ModalMetric label="CTR" value={item.ctr || (item.impressoes > 0 ? (item.cliques / item.impressoes) * 100 : 0)} type="percent" icon={TrendingUp} color="cyan" />
                 <ModalMetric label="Impressões" value={item.impressoes} type="number" icon={Eye} color="blue" />
