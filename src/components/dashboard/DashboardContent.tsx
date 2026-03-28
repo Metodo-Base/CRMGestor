@@ -8,7 +8,8 @@ import {
   ChevronDown, Filter, Search, Calendar,
   Download, ArrowUpDown, Users, Activity,
   Zap, Award, ArrowUpRight, ArrowDownRight,
-  Layers, PieChart as PieChartIcon, X, Bug, ListFilter, CheckCircle2
+  Layers, PieChart as PieChartIcon, X, Bug, ListFilter, CheckCircle2,
+  ArrowUp, ArrowDown
 } from "lucide-react";
 import { 
   XAxis, YAxis, CartesianGrid, 
@@ -31,6 +32,10 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
   const [dados, setDados] = useState<DadosCampanha[]>([]);
   const [campanhas, setCampanhas] = useState<any[]>([]);
   const [adTotals, setAdTotals] = useState<any[]>([]);
+  const [adsetTotals, setAdsetTotals] = useState<any[]>([]);
+  const [adSortConfig, setAdSortConfig] = useState<{ key: string; direction: "asc" | "desc" }>({ key: 'investimento', direction: 'desc' });
+  const [adsetSortConfig, setAdsetSortConfig] = useState<{ key: string; direction: "asc" | "desc" }>({ key: 'investimento', direction: 'desc' });
+  const [campaignSortConfig, setCampaignSortConfig] = useState<{ key: string; direction: "asc" | "desc" }>({ key: 'investimento', direction: 'desc' });
   const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +43,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
   // Applied Filters (These trigger data fetching)
   const [periodo, setPeriodo] = useState("30"); // days
   const [filtroCampanha, setFiltroCampanha] = useState("");
+  const [selectedCampaign, setSelectedCampaign] = useState<string>('all');
   const [filtroPlataforma, setFiltroPlataforma] = useState("todas");
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
@@ -45,6 +51,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
   // Local Filters (These are changed by UI but don't trigger fetch until "Update" is clicked)
   const [localPeriodo, setLocalPeriodo] = useState(periodo);
   const [localFiltroCampanha, setLocalFiltroCampanha] = useState(filtroCampanha);
+  const [localSelectedCampaign, setLocalSelectedCampaign] = useState(selectedCampaign);
   const [localFiltroPlataforma, setLocalFiltroPlataforma] = useState(filtroPlataforma);
   const [localDataInicio, setLocalDataInicio] = useState(dataInicio);
   const [localDataFim, setLocalDataFim] = useState(dataFim);
@@ -58,7 +65,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
   });
 
   const [selectedItem, setSelectedItem] = useState<any>(null);
-  const [modalType, setModalType] = useState<"campaign" | "ad" | "all_campaigns" | null>(null);
+  const [modalType, setModalType] = useState<"campaign" | "ad" | "adset" | "all_campaigns" | null>(null);
 
   const [debugMode, setDebugMode] = useState(false);
   const [debugInfo, setDebugInfo] = useState<any>(null);
@@ -66,6 +73,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
   const handleApplyFilters = () => {
     setPeriodo(localPeriodo);
     setFiltroCampanha(localFiltroCampanha);
+    setSelectedCampaign(localSelectedCampaign);
     setFiltroPlataforma(localFiltroPlataforma);
     setDataInicio(localDataInicio);
     setDataFim(localDataFim);
@@ -269,6 +277,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
                     if (result.debug) setDebugInfo(result.debug);
                     if (result.campaigns) setCampanhas(result.campaigns);
                     if (result.ad_totals) setAdTotals(result.ad_totals);
+                    if (result.adset_totals) setAdsetTotals(result.adset_totals);
                     if (!clientData.google_ads_conectado) setSummary(result.summary);
                     
                     const mappedMeta = insights.map((insight: any, index: number) => ({
@@ -507,8 +516,60 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
       );
     }
 
+    // Filter by Selected Campaign ID
+    if (selectedCampaign !== 'all') {
+      result = result.filter(d => (d.campanha_id_externo || d.campanha_nome) === selectedCampaign);
+    }
+
     return result;
+  }, [dados, periodo, dataInicio, dataFim, filtroPlataforma, filtroCampanha, selectedCampaign]);
+
+  const availableCampaigns = useMemo(() => {
+    let result = [...dados];
+
+    // Filter by Period or Custom Date
+    if (dataInicio && dataFim) {
+      const start = startOfDay(parseISO(dataInicio));
+      const end = endOfDay(parseISO(dataFim));
+      result = result.filter(d => {
+        const date = parseISO(d.data);
+        return isWithinInterval(date, { start, end });
+      });
+    } else if (periodo !== "max") {
+      const now = new Date();
+      const startDate = startOfDay(subDays(now, parseInt(periodo)));
+      result = result.filter(d => parseISO(d.data) >= startDate);
+    }
+
+    // Filter by Platform
+    if (filtroPlataforma !== "todas") {
+      result = result.filter(d => d.plataforma === filtroPlataforma);
+    }
+
+    // Filter by Campaign Name Search
+    if (filtroCampanha) {
+      result = result.filter(d => 
+        d.campanha_nome.toLowerCase().includes(filtroCampanha.toLowerCase())
+      );
+    }
+
+    const campaigns: Record<string, string> = {};
+    result.forEach(d => {
+      const id = d.campanha_id_externo || d.campanha_nome;
+      if (!campaigns[id]) {
+        campaigns[id] = d.campanha_nome;
+      }
+    });
+    return Object.entries(campaigns).map(([id, nome]) => ({ id, nome }));
   }, [dados, periodo, dataInicio, dataFim, filtroPlataforma, filtroCampanha]);
+
+  // Reset selected campaign if it's no longer in available campaigns
+  useEffect(() => {
+    if (selectedCampaign !== 'all' && !availableCampaigns.some(c => c.id === selectedCampaign)) {
+      setSelectedCampaign('all');
+      setLocalSelectedCampaign('all');
+    }
+  }, [availableCampaigns, selectedCampaign]);
 
   const metrics = useMemo(() => {
     const now = new Date();
@@ -537,15 +598,31 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
       prevEnd = new Date(0);
     }
 
-    const currentData = dados.filter(d => {
+    const applyFilters = (data: DadosCampanha[]) => {
+      let result = [...data];
+      if (filtroPlataforma !== "todas") {
+        result = result.filter(d => d.plataforma === filtroPlataforma);
+      }
+      if (filtroCampanha) {
+        result = result.filter(d => 
+          d.campanha_nome.toLowerCase().includes(filtroCampanha.toLowerCase())
+        );
+      }
+      if (selectedCampaign !== 'all') {
+        result = result.filter(d => (d.campanha_id_externo || d.campanha_nome) === selectedCampaign);
+      }
+      return result;
+    };
+
+    const currentData = applyFilters(dados.filter(d => {
       const date = parseISO(d.data);
       return isWithinInterval(date, { start: currentStart, end: currentEnd });
-    });
+    }));
 
-    const previousData = dados.filter(d => {
+    const previousData = applyFilters(dados.filter(d => {
       const date = parseISO(d.data);
       return isWithinInterval(date, { start: prevStart, end: prevEnd });
-    });
+    }));
 
     const calculateTotals = (data: DadosCampanha[]) => {
       return data.reduce((acc, curr) => ({
@@ -563,7 +640,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
     const previousTotals = calculateTotals(previousData);
 
     // If we have summary from API and no filters, use it for current period (more accurate for Reach/Frequency)
-    if (summary && filtroPlataforma === "todas" && !filtroCampanha) {
+    if (summary && filtroPlataforma === "todas" && !filtroCampanha && selectedCampaign === 'all') {
       currentTotals.investimento = parseFloat(summary.spend || 0);
       currentTotals.cliques = parseInt(summary.clicks || 0);
       currentTotals.impressoes = parseInt(summary.impressions || 0);
@@ -605,7 +682,7 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
     const activeCampaigns = new Set(currentData.map(d => d.campanha_id_externo)).size;
 
     return { ...currentMetrics, variations, activeCampaigns };
-  }, [dados, summary, filtroPlataforma, filtroCampanha, periodo, dataInicio, dataFim]);
+  }, [dados, summary, filtroPlataforma, filtroCampanha, selectedCampaign, periodo, dataInicio, dataFim]);
 
   const chartData = useMemo(() => {
     const groups: Record<string, any> = {};
@@ -658,30 +735,13 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
     }));
   }, [filteredData, periodo, dataInicio, dataFim]);
 
-  // Aggregated Detailed Report
   const campaignRanking = useMemo(() => {
-    // Se tivermos dados de campanhas pré-agregados da API e não houver filtro de nome de campanha, use-os
-    if (campanhas.length > 0 && !filtroCampanha && filtroPlataforma === "todas") {
-      return campanhas.map(c => ({
-        nome: c.campanha_nome,
-        investimento: c.investimento,
-        cliques: c.cliques,
-        impressoes: c.impressoes,
-        conversoes: c.conversoes,
-        resultados: c.resultados,
-        whatsapp_conversations: c.wa_conversations || c.whatsapp_conversations || 0,
-        cpl: c.conversoes > 0 ? c.investimento / c.conversoes : 0,
-        cpwa: (c.wa_conversations || c.whatsapp_conversations || 0) > 0 ? c.investimento / (c.wa_conversations || c.whatsapp_conversations) : 0,
-        cpm: c.impressoes > 0 ? (c.investimento / c.impressoes) * 1000 : 0,
-        ctr: c.impressoes > 0 ? (c.cliques / c.impressoes) * 100 : 0,
-      })).sort((a, b) => b.investimento - a.investimento);
-    }
-
     const report: Record<string, any> = {};
     filteredData.forEach(d => {
-      const key = d.campanha_id_externo;
+      const key = d.campanha_id_externo || d.campanha_nome;
       if (!report[key]) {
         report[key] = {
+          id: key,
           nome: d.campanha_nome,
           investimento: 0,
           cliques: 0,
@@ -699,22 +759,44 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
       report[key].whatsapp_conversations += (d.whatsapp_conversations || 0);
     });
 
-    return Object.values(report).map(r => ({
+    const list = Object.values(report).map(r => ({
       ...r,
       cpl: r.conversoes > 0 ? r.investimento / r.conversoes : 0,
       cpwa: r.whatsapp_conversations > 0 ? r.investimento / r.whatsapp_conversations : 0,
+      cpr: r.resultados > 0 ? r.investimento / r.resultados : 0,
       cpm: r.impressoes > 0 ? (r.investimento / r.impressoes) * 1000 : 0,
       ctr: r.impressoes > 0 ? (r.cliques / r.impressoes) * 100 : 0,
-    })).sort((a, b) => b.investimento - a.investimento);
-  }, [filteredData]);
+    }));
 
-  const adRanking = useMemo(() => {
-    // Se temos os totais precisos do backend, use-os diretamente
-    if (adTotals && adTotals.length > 0) {
-      return adTotals.map(r => ({
-        ad_id: r.ad_id,
-        nome: r.ad_name,
+    let filtered = list;
+    if (selectedCampaign !== 'all') {
+      filtered = list.filter((c: any) => c.id === selectedCampaign);
+    }
+
+    return filtered.sort((a: any, b: any) => {
+      const aValue = a[campaignSortConfig.key];
+      const bValue = b[campaignSortConfig.key];
+      
+      if (typeof aValue === 'string') {
+        return campaignSortConfig.direction === 'asc' 
+          ? aValue.localeCompare(bValue) 
+          : bValue.localeCompare(aValue);
+      }
+      
+      const numA = aValue || 0;
+      const numB = bValue || 0;
+      return campaignSortConfig.direction === 'asc' ? numA - numB : numB - numA;
+    });
+  }, [filteredData, campaignSortConfig, selectedCampaign]);
+
+  const adsetRanking = useMemo(() => {
+    let list = [];
+    if (adsetTotals && adsetTotals.length > 0) {
+      list = adsetTotals.map(r => ({
+        id: r.adset_id,
+        nome: r.adset_name,
         campanha: r.campaign_name,
+        campaign_id: r.campaign_id,
         investimento: r.investimento,
         cliques: r.cliques,
         impressoes: r.impressoes,
@@ -724,47 +806,146 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
         whatsapp_conversations: r.wa_conversations || r.whatsapp_conversations || 0,
         cpl: r.conversoes > 0 ? r.investimento / r.conversoes : 0,
         cpwa: (r.wa_conversations || r.whatsapp_conversations || 0) > 0 ? r.investimento / (r.wa_conversations || r.whatsapp_conversations) : 0,
+        cpr: r.resultados > 0 ? r.investimento / r.resultados : 0,
         cpm: r.impressoes > 0 ? (r.investimento / r.impressoes) * 1000 : 0,
         ctr: r.impressoes > 0 ? (r.cliques / r.impressoes) * 100 : 0,
         frequency: r.frequency || (r.reach > 0 ? r.impressoes / r.reach : 1),
-      })).sort((a, b) => b.conversoes - a.conversoes).slice(0, 10);
+      }));
+    } else {
+      const report: Record<string, any> = {};
+      filteredData.forEach(d => {
+        const key = d.adset_id_externo || d.adset_nome || "Sem Nome";
+        if (!report[key]) {
+          report[key] = {
+            id: key,
+            nome: d.adset_nome || "Sem Nome",
+            campanha: d.campanha_nome,
+            campaign_id: d.campanha_id_externo,
+            investimento: 0,
+            cliques: 0,
+            impressoes: 0,
+            conversoes: 0,
+            resultados: 0,
+            whatsapp_conversations: 0,
+          };
+        }
+        report[key].investimento += d.investimento;
+        report[key].cliques += d.cliques;
+        report[key].impressoes += d.impressoes;
+        report[key].conversoes += d.conversoes;
+        report[key].resultados += (d.resultados || 0);
+        report[key].whatsapp_conversations += (d.whatsapp_conversations || 0);
+      });
+      list = Object.values(report).map(r => ({
+        ...r,
+        cpl: r.conversoes > 0 ? r.investimento / r.conversoes : 0,
+        cpwa: r.whatsapp_conversations > 0 ? r.investimento / r.whatsapp_conversations : 0,
+        cpr: r.resultados > 0 ? r.investimento / r.resultados : 0,
+        cpm: r.impressoes > 0 ? (r.investimento / r.impressoes) * 1000 : 0,
+        ctr: r.impressoes > 0 ? (r.cliques / r.impressoes) * 100 : 0,
+        frequency: 1,
+      }));
     }
 
-    // Fallback para agregação manual (menos preciso para alcance/frequência)
-    const report: Record<string, any> = {};
-    filteredData.forEach(d => {
-      const key = d.ad_nome || "Sem Nome";
-      if (!report[key]) {
-        report[key] = {
-          nome: key,
-          campanha: d.campanha_nome,
-          investimento: 0,
-          cliques: 0,
-          impressoes: 0,
-          reach: 0,
-          conversoes: 0,
-          resultados: 0,
-          whatsapp_conversations: 0,
-        };
-      }
-      report[key].investimento += d.investimento;
-      report[key].cliques += d.cliques;
-      report[key].impressoes += d.impressoes;
-      report[key].reach += (d.alcance || 0);
-      report[key].conversoes += d.conversoes;
-      report[key].resultados += (d.resultados || 0);
-      report[key].whatsapp_conversations += (d.whatsapp_conversations || 0);
-    });
+    let filtered = list;
+    if (selectedCampaign !== 'all') {
+      filtered = list.filter((as: any) => as.campaign_id === selectedCampaign);
+    }
 
-    return Object.values(report).map(r => ({
-      ...r,
-      cpl: r.conversoes > 0 ? r.investimento / r.conversoes : 0,
-      cpwa: r.whatsapp_conversations > 0 ? r.investimento / r.whatsapp_conversations : 0,
-      cpm: r.impressoes > 0 ? (r.investimento / r.impressoes) * 1000 : 0,
-      ctr: r.impressoes > 0 ? (r.cliques / r.impressoes) * 100 : 0,
-      frequency: r.reach > 0 ? r.impressoes / r.reach : 1,
-    })).sort((a, b) => b.conversoes - a.conversoes).slice(0, 10);
-  }, [filteredData, adTotals]);
+    return filtered.sort((a: any, b: any) => {
+      const aValue = a[adsetSortConfig.key];
+      const bValue = b[adsetSortConfig.key];
+      
+      if (typeof aValue === 'string') {
+        return adsetSortConfig.direction === 'asc' 
+          ? aValue.localeCompare(bValue) 
+          : bValue.localeCompare(aValue);
+      }
+      
+      const numA = aValue || 0;
+      const numB = bValue || 0;
+      return adsetSortConfig.direction === 'asc' ? numA - numB : numB - numA;
+    });
+  }, [filteredData, adsetTotals, adsetSortConfig, selectedCampaign]);
+
+  const adRanking = useMemo(() => {
+    let list = [];
+    if (adTotals && adTotals.length > 0) {
+      list = adTotals.map(r => ({
+        id: r.ad_id,
+        nome: r.ad_name,
+        campanha: r.campaign_name,
+        campaign_id: r.campaign_id,
+        investimento: r.investimento,
+        cliques: r.cliques,
+        impressoes: r.impressoes,
+        reach: r.reach,
+        conversoes: r.conversoes,
+        resultados: r.resultados,
+        whatsapp_conversations: r.wa_conversations || r.whatsapp_conversations || 0,
+        cpl: r.conversoes > 0 ? r.investimento / r.conversoes : 0,
+        cpwa: (r.wa_conversations || r.whatsapp_conversations || 0) > 0 ? r.investimento / (r.wa_conversations || r.whatsapp_conversations) : 0,
+        cpr: r.resultados > 0 ? r.investimento / r.resultados : 0,
+        cpm: r.impressoes > 0 ? (r.investimento / r.impressoes) * 1000 : 0,
+        ctr: r.impressoes > 0 ? (r.cliques / r.impressoes) * 100 : 0,
+        frequency: r.frequency || (r.reach > 0 ? r.impressoes / r.reach : 1),
+      }));
+    } else {
+      const report: Record<string, any> = {};
+      filteredData.forEach(d => {
+        const key = d.ad_id_externo || d.ad_nome || "Sem Nome";
+        if (!report[key]) {
+          report[key] = {
+            id: key,
+            nome: d.ad_nome || "Sem Nome",
+            campanha: d.campanha_nome,
+            campaign_id: d.campanha_id_externo,
+            investimento: 0,
+            cliques: 0,
+            impressoes: 0,
+            conversoes: 0,
+            resultados: 0,
+            whatsapp_conversations: 0,
+          };
+        }
+        report[key].investimento += d.investimento;
+        report[key].cliques += d.cliques;
+        report[key].impressoes += d.impressoes;
+        report[key].conversoes += d.conversoes;
+        report[key].resultados += (d.resultados || 0);
+        report[key].whatsapp_conversations += (d.whatsapp_conversations || 0);
+      });
+      list = Object.values(report).map(r => ({
+        ...r,
+        cpl: r.conversoes > 0 ? r.investimento / r.conversoes : 0,
+        cpwa: r.whatsapp_conversations > 0 ? r.investimento / r.whatsapp_conversations : 0,
+        cpr: r.resultados > 0 ? r.investimento / r.resultados : 0,
+        cpm: r.impressoes > 0 ? (r.investimento / r.impressoes) * 1000 : 0,
+        ctr: r.impressoes > 0 ? (r.cliques / r.impressoes) * 100 : 0,
+        frequency: 1,
+      }));
+    }
+
+    let filtered = list;
+    if (selectedCampaign !== 'all') {
+      filtered = list.filter((ad: any) => ad.campaign_id === selectedCampaign);
+    }
+
+    return filtered.sort((a: any, b: any) => {
+      const aValue = a[adSortConfig.key];
+      const bValue = b[adSortConfig.key];
+      
+      if (typeof aValue === 'string') {
+        return adSortConfig.direction === 'asc' 
+          ? aValue.localeCompare(bValue) 
+          : bValue.localeCompare(aValue);
+      }
+      
+      const numA = aValue || 0;
+      const numB = bValue || 0;
+      return adSortConfig.direction === 'asc' ? numA - numB : numB - numA;
+    });
+  }, [filteredData, adTotals, adSortConfig, selectedCampaign]);
 
   const handleSort = (key: string) => {
     setSortConfig(prev => ({
@@ -806,6 +987,9 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
           setFiltroPlataforma={setLocalFiltroPlataforma}
           filtroCampanha={localFiltroCampanha}
           setFiltroCampanha={setLocalFiltroCampanha}
+          selectedCampaign={localSelectedCampaign}
+          setSelectedCampaign={setLocalSelectedCampaign}
+          campaignRanking={availableCampaigns}
           debugMode={debugMode}
           setDebugMode={setDebugMode}
           onApplyFilters={handleApplyFilters}
@@ -850,6 +1034,9 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
           setFiltroPlataforma={setLocalFiltroPlataforma}
           filtroCampanha={localFiltroCampanha}
           setFiltroCampanha={setLocalFiltroCampanha}
+          selectedCampaign={localSelectedCampaign}
+          setSelectedCampaign={setLocalSelectedCampaign}
+          campaignRanking={availableCampaigns}
           debugMode={debugMode}
           setDebugMode={setDebugMode}
           onApplyFilters={handleApplyFilters}
@@ -895,6 +1082,9 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
         setFiltroPlataforma={setLocalFiltroPlataforma}
         filtroCampanha={localFiltroCampanha}
         setFiltroCampanha={setLocalFiltroCampanha}
+        selectedCampaign={localSelectedCampaign}
+        setSelectedCampaign={setLocalSelectedCampaign}
+        campaignRanking={availableCampaigns}
         debugMode={debugMode}
         setDebugMode={setDebugMode}
         onApplyFilters={handleApplyFilters}
@@ -978,7 +1168,16 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
           subtitle="Performance por campanha de anúncios"
           data={campaignRanking} 
           type="campaign"
+          sortConfig={campaignSortConfig}
+          onSort={(key: string) => {
+            setCampaignSortConfig(prev => ({
+              key,
+              direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+            }));
+          }}
           onItemClick={(item: any) => {
+            setSelectedCampaign(item.id);
+            setLocalSelectedCampaign(item.id);
             setSelectedItem(item);
             setModalType("campaign");
           }}
@@ -987,17 +1186,47 @@ export default function DashboardContent({ clienteId, isInternal = false }: Dash
             setModalType("all_campaigns");
           }}
         />
+
+        <RankingTable 
+          title="Conjuntos de Anúncios" 
+          subtitle="Performance por conjunto de anúncios"
+          data={adsetRanking} 
+          type="adset"
+          sortConfig={adsetSortConfig}
+          onSort={(key: string) => {
+            setAdsetSortConfig(prev => ({
+              key,
+              direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+            }));
+          }}
+          onItemClick={(item: any) => {
+            setSelectedItem(item);
+            setModalType("adset");
+          }}
+          onHeaderIconClick={() => {
+            setSelectedItem(adsetRanking);
+            setModalType("all_campaigns");
+          }}
+        />
+
         <RankingTable 
           title="Melhores Anúncios" 
-          subtitle="Top 10 anúncios por conversões"
+          subtitle="Performance detalhada por anúncio"
           data={adRanking} 
           type="ad"
+          sortConfig={adSortConfig}
+          onSort={(key: string) => {
+            setAdSortConfig(prev => ({
+              key,
+              direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+            }));
+          }}
           onItemClick={(item: any) => {
             setSelectedItem(item);
             setModalType("ad");
           }}
           onHeaderIconClick={() => {
-            setSelectedItem(campaignRanking);
+            setSelectedItem(adRanking);
             setModalType("all_campaigns");
           }}
         />
@@ -1190,6 +1419,8 @@ function DashboardHeader({
   dataInicio, setDataInicio, dataFim, setDataFim,
   filtroPlataforma, setFiltroPlataforma,
   filtroCampanha, setFiltroCampanha,
+  selectedCampaign, setSelectedCampaign,
+  campaignRanking,
   debugMode, setDebugMode,
   onApplyFilters,
   showComparison, setShowComparison
@@ -1352,8 +1583,27 @@ function DashboardHeader({
           </div>
           <div className="sm:col-span-2 lg:col-span-1 space-y-2">
             <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-2">
+              <Filter className="w-3 h-3" />
+              Filtrar por Campanha
+            </label>
+            <div className="relative">
+              <select 
+                value={selectedCampaign}
+                onChange={(e) => setSelectedCampaign(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-slate-100 focus:ring-indigo-500 focus:border-indigo-500 appearance-none px-4 py-2"
+              >
+                <option value="all">Todas as Campanhas</option>
+                {campaignRanking.map((c: any) => (
+                  <option key={c.id} value={c.id}>{c.nome}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            </div>
+          </div>
+          <div className="sm:col-span-2 lg:col-span-1 space-y-2">
+            <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-2">
               <Search className="w-3 h-3" />
-              Buscar Campanha
+              Buscar por Nome
             </label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -1542,7 +1792,29 @@ function TrafficFunnel({ impressions, reach, clicks, leads }: any) {
   );
 }
 
-function RankingTable({ title, subtitle, data, type, onItemClick, onHeaderIconClick }: any) {
+function RankingTable({ title, subtitle, data, type, onItemClick, onHeaderIconClick, sortConfig, onSort }: any) {
+  const renderSortIcon = (key: string) => {
+    if (sortConfig?.key !== key) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-20" />;
+    return sortConfig.direction === 'asc' 
+      ? <ArrowUp className="w-3 h-3 ml-1 text-indigo-500" /> 
+      : <ArrowDown className="w-3 h-3 ml-1 text-indigo-500" />;
+  };
+
+  const headers = [
+    { key: 'nome', label: type === 'campaign' ? 'Campanha' : type === 'adset' ? 'Conjunto' : 'Anúncio', align: 'left' },
+    { key: 'investimento', label: 'Investimento', align: 'right' },
+    { key: 'resultados', label: 'Resultados', align: 'right' },
+    { key: 'whatsapp_conversations', label: 'Conversas WA', align: 'right' },
+    { key: 'cpwa', label: 'Custo/Conversa WA', align: 'right' },
+    { key: 'cpr', label: 'Custo/Res', align: 'right' },
+    { key: 'ctr', label: 'CTR', align: 'right' },
+  ];
+
+  if (type === 'ad' || type === 'adset') {
+    headers.push({ key: 'frequency', label: 'Freq.', align: 'right' });
+    headers.push({ key: 'cpm', label: 'CPM', align: 'right' });
+  }
+
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col h-full">
       <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -1563,27 +1835,28 @@ function RankingTable({ title, subtitle, data, type, onItemClick, onHeaderIconCl
         <table className="w-full text-left">
           <thead className="bg-slate-50/50 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-800">
             <tr>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                {type === 'campaign' ? 'Campanha' : 'Anúncio'}
-              </th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Investimento</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Cadastros</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Conversas WA</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Custo/Conversa WA</th>
-              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">CTR</th>
-              {type === 'ad' && (
-                <>
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Freq.</th>
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">CPM</th>
-                </>
-              )}
+              {headers.map(header => (
+                <th 
+                  key={header.key}
+                  onClick={() => onSort(header.key)}
+                  className={cn(
+                    "px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest cursor-pointer hover:text-indigo-500 transition-colors",
+                    header.align === 'right' ? "text-right" : "text-left"
+                  )}
+                >
+                  <div className={cn("flex items-center", header.align === 'right' ? "justify-end" : "justify-start")}>
+                    {header.label}
+                    {renderSortIcon(header.key)}
+                  </div>
+                </th>
+              ))}
               <th className="px-6 py-3 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest text-right">Ação</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {data.length === 0 ? (
               <tr>
-                <td colSpan={type === 'campaign' ? 8 : 7} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500 italic text-sm">
+                <td colSpan={headers.length + 1} className="px-6 py-12 text-center text-slate-400 dark:text-slate-500 italic text-sm">
                   Nenhum dado disponível.
                 </td>
               </tr>
@@ -1597,41 +1870,27 @@ function RankingTable({ title, subtitle, data, type, onItemClick, onHeaderIconCl
                       </div>
                       <div className="min-w-0">
                         <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate max-w-[180px]">{item.nome}</p>
-                        {type === 'ad' && <p className="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-[180px]">{item.campanha}</p>}
+                        {(type === 'ad' || type === 'adset') && <p className="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-[180px]">{item.campanha}</p>}
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <p className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.investimento)}
-                    </p>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <p className="text-xs font-bold text-slate-900 dark:text-slate-100">{item.conversoes.toLocaleString('pt-BR')}</p>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <p className="text-xs font-bold text-slate-900 dark:text-white">{(item.whatsapp_conversations || 0).toLocaleString('pt-BR')}</p>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.cpwa)}
-                    </p>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <p className="text-xs text-slate-600 dark:text-slate-400">{item.ctr.toFixed(2)}%</p>
-                  </td>
-                  {type === 'ad' && (
-                    <>
-                      <td className="px-6 py-4 text-right">
-                        <p className="text-xs text-slate-600 dark:text-slate-400">{item.frequency.toFixed(2)}</p>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <p className="text-xs text-slate-600 dark:text-slate-400">
-                          {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.cpm)}
-                        </p>
-                      </td>
-                    </>
-                  )}
+                  {headers.slice(1).map(header => (
+                    <td key={header.key} className="px-6 py-4 text-right">
+                      <p className={cn(
+                        "text-xs font-bold",
+                        header.key === 'investimento' || header.key === 'resultados' || header.key === 'whatsapp_conversations'
+                          ? "text-slate-900 dark:text-slate-100"
+                          : "text-slate-600 dark:text-slate-400"
+                      )}>
+                        {header.key === 'investimento' || header.key === 'cpwa' || header.key === 'cpr' || header.key === 'cpm'
+                          ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item[header.key] || 0)
+                          : header.key === 'ctr' || header.key === 'frequency'
+                            ? `${(item[header.key] || 0).toFixed(2)}${header.key === 'ctr' ? '%' : ''}`
+                            : (item[header.key] || 0).toLocaleString('pt-BR')
+                        }
+                      </p>
+                    </td>
+                  ))}
                   <td className="px-6 py-4 text-right">
                     <button 
                       onClick={() => onItemClick(item)}
@@ -1775,7 +2034,7 @@ function DetailsModal({ item, type, onClose }: any) {
             </div>
             <div>
               <h2 className="text-xl font-black text-slate-900 dark:text-white">
-                {isAllCampaigns ? 'Performance por Campanhas' : `Detalhes ${type === 'campaign' ? 'da Campanha' : 'do Anúncio'}`}
+                {isAllCampaigns ? 'Performance por Campanhas' : `Detalhes ${type === 'campaign' ? 'da Campanha' : type === 'adset' ? 'do Conjunto' : 'do Anúncio'}`}
               </h2>
               {!isAllCampaigns && <p className="text-xs text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest">{item.nome}</p>}
               {isAllCampaigns && <p className="text-xs text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest">Resumo de todas as campanhas no período</p>}
@@ -1854,7 +2113,7 @@ function DetailsModal({ item, type, onClose }: any) {
                     <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-bold">Plataforma</p>
                     <p className="text-sm font-bold text-slate-900 dark:text-white">Meta Ads</p>
                   </div>
-                  {type === 'ad' && (
+                  { (type === 'ad' || type === 'adset') && (
                     <>
                       <div>
                         <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase font-bold">Campanha</p>
